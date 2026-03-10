@@ -1,0 +1,74 @@
+{
+  "auth": {
+    "login": { "method": "POST", "path": "/api/auth/login", "desc": "Đăng nhập" },
+    "me": { "method": "GET", "path": "/api/auth/me", "desc": "Lấy user hiện tại" },
+    "changePassword": { "method": "POST", "path": "/api/auth/change-password", "desc": "Đổi mật khẩu của mình" },
+    "updateProfile": { "method": "PUT", "path": "/api/auth/profile", "desc": "Cập nhật thông tin cá nhân (tên, email, SĐT)" }
+  },
+  "suppliers": {
+    "list": { "method": "GET", "path": "/api/suppliers", "desc": "Danh sách NCC" },
+    "getById": { "method": "GET", "path": "/api/suppliers/:id", "desc": "Chi tiết NCC" },
+    "create": { "method": "POST", "path": "/api/suppliers", "desc": "Thêm NCC" },
+    "update": { "method": "PUT", "path": "/api/suppliers/:id", "desc": "Sửa NCC" },
+    "delete": { "method": "DELETE", "path": "/api/suppliers/:id", "desc": "Xóa NCC" }
+  },
+  "categories": {
+    "list": { "method": "GET", "path": "/api/categories", "desc": "Danh sách danh mục" },
+    "getById": { "method": "GET", "path": "/api/categories/:id", "desc": "Chi tiết danh mục" },
+    "create": { "method": "POST", "path": "/api/categories", "desc": "Thêm danh mục" },
+    "update": { "method": "PUT", "path": "/api/categories/:id", "desc": "Sửa danh mục" },
+    "delete": { "method": "DELETE", "path": "/api/categories/:id", "desc": "Xóa danh mục" }
+  },
+  "products": {
+    "list": { "method": "GET", "path": "/api/products", "desc": "Danh sách sản phẩm" },
+    "getById": { "method": "GET", "path": "/api/products/:id", "desc": "Chi tiết SP" },
+    "create": { "method": "POST", "path": "/api/products", "desc": "Thêm SP" },
+    "update": { "method": "PUT", "path": "/api/products/:id", "desc": "Sửa SP" },
+    "delete": { "method": "DELETE", "path": "/api/products/:id", "desc": "Xóa SP" }
+  },
+  "stores": {
+    "list": { "method": "GET", "path": "/api/stores", "desc": "Danh sách cửa hàng" },
+    "getById": { "method": "GET", "path": "/api/stores/:id", "desc": "Chi tiết cửa hàng" },
+    "create": { "method": "POST", "path": "/api/stores", "desc": "Thêm cửa hàng" },
+    "update": { "method": "PUT", "path": "/api/stores/:id", "desc": "Sửa cửa hàng" },
+    "delete": { "method": "DELETE", "path": "/api/stores/:id", "desc": "Xóa cửa hàng" }
+  },
+  "users": {
+    "list": { "method": "GET", "path": "/api/users", "desc": "Danh sách user" },
+    "getById": { "method": "GET", "path": "/api/users/:id", "desc": "Chi tiết user" },
+    "create": { "method": "POST", "path": "/api/users", "desc": "Thêm user" },
+    "update": { "method": "PUT", "path": "/api/users/:id", "desc": "Sửa user" },
+    "delete": { "method": "DELETE", "path": "/api/users/:id", "desc": "Xóa user" },
+    "resetPassword": { "method": "POST", "path": "/api/users/:id/reset-password", "desc": "Admin reset mật khẩu user" }
+  },
+  "orders": {
+    "list": { "method": "GET", "path": "/api/orders", "desc": "Danh sách đơn" },
+    "getById": { "method": "GET", "path": "/api/orders/:id", "desc": "Chi tiết đơn" },
+    "create": { "method": "POST", "path": "/api/orders", "desc": "Tạo đơn" },
+    "accept": { "method": "PATCH", "path": "/api/orders/:id/accept", "desc": "Admin chấp nhận đơn" },
+    "reject": { "method": "PATCH", "path": "/api/orders/:id/reject", "desc": "Admin từ chối đơn" },
+    "confirmTotal": { "method": "PATCH", "path": "/api/orders/:id/confirm-total", "desc": "Admin đóng đơn" },
+    "updateStatus": { "method": "PATCH", "path": "/api/orders/:id/status", "desc": "Admin cập nhật trạng thái đơn tổng" }
+  },
+  "orderSuppliers": {
+    "confirmReceive": { "method": "PATCH", "path": "/api/order-suppliers/:id/confirm-receive", "desc": "Store xác nhận nhận hàng" },
+    "stockIn": { "method": "POST", "path": "/api/order-suppliers/:id/stock-in", "desc": "Nhập kho từ đơn NCC" },
+    "updateStatus": { "method": "PATCH", "path": "/api/order-suppliers/:id/status", "desc": "Admin cập nhật trạng thái đơn NCC (khi NCC không dùng hệ thống)" }
+  },
+  "supplierOrders": {
+    "list": { "method": "GET", "path": "/api/supplier-orders", "desc": "Đơn của NCC" },
+    "getById": { "method": "GET", "path": "/api/supplier-orders/:id", "desc": "Chi tiết đơn NCC" },
+    "updateStatus": { "method": "PATCH", "path": "/api/supplier-orders/:id/status", "desc": "Cập nhật trạng thái (Confirm/Reject/Partial/Delivering/Delivered)" }
+  },
+  "warehouse": {
+    "stock": { "method": "GET", "path": "/api/warehouse/stock", "desc": "Tồn kho theo cửa hàng (Admin/Store)" },
+    "transactions": { "method": "GET", "path": "/api/warehouse/transactions", "desc": "Lịch sử nhập/xuất kho (Admin/Store)" },
+    "supplierStock": { "method": "GET", "path": "/api/warehouse/supplier-stock", "desc": "Tồn kho tại NCC (chỉ SupplierUser)" }
+  },
+  "reports": {
+    "summary": { "method": "GET", "path": "/api/reports/summary", "desc": "Báo cáo tổng hợp" }
+  },
+  "dashboard": {
+    "stats": { "method": "GET", "path": "/api/dashboard/stats", "desc": "Thống kê dashboard" }
+  }
+}
