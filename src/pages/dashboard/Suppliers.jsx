@@ -113,7 +113,7 @@ export function Suppliers() {
         <CardHeader className="p-4 border-b">
           <div className="flex flex-col gap-4">
             <div className="flex flex-row flex-wrap items-center justify-between gap-2">
-              <Typography variant="h6" color="blue-gray">Quản lý Nhà cung cấp</Typography>
+              <Typography variant="h6" color="blue-gray">Nhà cung cấp</Typography>
               <div className="flex items-center gap-2">
                 {useApi && suppliers.length === 0 && !apiLoading && (
                   <>

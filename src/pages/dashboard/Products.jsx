@@ -104,7 +104,7 @@ export function Products() {
         <CardHeader className="p-4 border-b">
           <div className="flex flex-col gap-4">
             <div className="flex flex-row flex-wrap items-center justify-between gap-2">
-              <Typography variant="h6" color="blue-gray">Quản lý Sản phẩm</Typography>
+              <Typography variant="h6" color="blue-gray">Sản phẩm</Typography>
               <div className="flex items-center gap-2">
                 {useApi && products.length === 0 && !apiLoading && (
                   <Button size="sm" variant="outlined" onClick={handleRefresh} disabled={refreshing}>{refreshing ? "Đang tải..." : "Tải lại"}</Button>

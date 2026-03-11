@@ -102,7 +102,7 @@ export function Warehouse() {
   return (
     <div className="mt-12 w-full max-w-full min-w-0">
       <Typography variant="h5" color="blue-gray" className="mb-4 flex items-center gap-2">
-        <ArchiveBoxIcon className="w-6 h-6" /> Quản lý kho
+        <ArchiveBoxIcon className="w-6 h-6" /> Kho
       </Typography>
 
       {showStockInSection && (

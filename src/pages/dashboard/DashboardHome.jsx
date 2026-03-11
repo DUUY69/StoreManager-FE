@@ -214,25 +214,6 @@ export function DashboardHome() {
 
   return (
     <div className="mt-12">
-      {/* Trạng thái kết nối API */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        {useApi ? (
-          apiLoading ? (
-            <span className="rounded bg-amber-100 px-3 py-1 text-sm text-amber-800">Đang tải dữ liệu từ API...</span>
-          ) : apiError ? (
-            <span className="rounded bg-red-100 px-3 py-1 text-sm text-red-800">
-              Lỗi API: {apiError}
-              {refetchInitialData && (
-                <button type="button" onClick={() => refetchInitialData()} className="ml-2 underline">Tải lại</button>
-              )}
-            </span>
-          ) : (
-            <span className="rounded bg-green-100 px-3 py-1 text-sm text-green-800">Đã kết nối API – dữ liệu từ server</span>
-          )
-        ) : (
-          <span className="rounded bg-gray-100 px-3 py-1 text-sm text-gray-600">Chế độ local – bật VITE_USE_API=true trong .env để dùng API</span>
-        )}
-      </div>
       {isAdmin && (
         <>
           <div className="mb-12 grid gap-y-10 gap-x-6 md:grid-cols-2 xl:grid-cols-4">

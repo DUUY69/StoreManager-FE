@@ -31,7 +31,7 @@ export const dashboardRoutesConfig = [
   { path: "/orders/:id", element: <OrderDetail />, name: null, icon: null, roles: ["Admin", "StoreUser"] },
   { path: "/supplier-orders", element: <SupplierOrderList />, name: "Đơn cần xử lý", icon: <ClipboardIcon {...icon} />, roles: ["SupplierUser"] },
   { path: "/supplier-orders/:id", element: <SupplierOrderDetail />, name: null, icon: null, roles: ["SupplierUser"] },
-  { path: "/warehouse", element: <Warehouse />, name: "Quản lý kho", icon: <ArchiveBoxIcon {...icon} />, roles: ["Admin", "StoreUser", "SupplierUser"] },
+  { path: "/warehouse", element: <Warehouse />, name: "Kho", icon: <ArchiveBoxIcon {...icon} />, roles: ["StoreUser", "SupplierUser"] },
   { path: "/reports", element: <Reports />, name: "Báo cáo", icon: <ChartBarIcon {...icon} />, roles: ["Admin"] },
   { path: "/settings", element: <Settings />, name: "Cài đặt", icon: <Cog6ToothIcon {...icon} />, roles: ["Admin", "StoreUser", "SupplierUser"] },
 ];

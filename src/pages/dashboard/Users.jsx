@@ -154,7 +154,7 @@ export function Users() {
     <div className="mt-12">
       <Card className="border border-blue-gray-100">
         <CardHeader className="flex flex-row items-center justify-between p-4 border-b">
-          <Typography variant="h6" color="blue-gray">Quản lý User</Typography>
+          <Typography variant="h6" color="blue-gray">User</Typography>
           <div className="flex items-center gap-2">
             {useApi && users.length === 0 && !apiLoading && (
               <Button size="sm" variant="outlined" onClick={handleRefresh} disabled={refreshing}>{refreshing ? "Đang tải..." : "Tải lại"}</Button>
