@@ -7,7 +7,12 @@
 import apiMapping from "@/config/api-mapping.json";
 import { addLog, updateLog } from "./api-log";
 
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+// Khi trang load qua HTTPS (Vercel) mà API URL là HTTP → dùng cùng origin để request đi qua proxy (tránh Mixed Content)
+let baseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+if (typeof window !== "undefined" && window.location.protocol === "https:" && baseUrl.startsWith("http://")) {
+  baseUrl = window.location.origin;
+}
+const BASE_URL = baseUrl;
 const USE_API = String(import.meta.env.VITE_USE_API || "").toLowerCase() === "true";
 
 const TOKEN_KEY = "admin_dashboard_token";
