@@ -5,6 +5,7 @@ import { ArrowLeftIcon, PrinterIcon, CheckCircleIcon, PhotoIcon, DocumentTextIco
 import { useData } from "@/context/DataContext";
 import { useAuth, useToast } from "@/context";
 import api from "@/api";
+import { printOrderBySupplier, exportOrderToExcel } from "@/utils/orderExport";
 
 // Đơn tổng: 4 trạng thái — Chờ, Từ chối, Chấp nhận, Hoàn thành
 /** Map status đơn tổng sang index timeline (0=Chờ, 1=Chấp nhận/Từ chối, 2=Hoàn thành). */
@@ -155,7 +156,7 @@ function readFilesAsDataUrl(files) {
 export function OrderDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { orders, setOrders, stores, useApi, refetchOrders } = useData();
+  const { orders, setOrders, stores, suppliers, useApi, refetchOrders } = useData();
   const { currentUser, isAdmin, isStoreUser } = useAuth();
   const { showToast } = useToast();
 
@@ -303,6 +304,7 @@ export function OrderDetail() {
         formData.append("confirm", "1");
         await api.request("orderSuppliers.confirmReceive", { params: { id: osId }, formData });
         applyConfirmReceiveToLocal(osId);
+        showToast("Đã xác nhận nhận hàng. Tồn kho cửa hàng đã được cập nhật.", "success");
       } catch (e) {
         const msg = e?.data?.message || e?.message || "Lỗi xác nhận nhận hàng";
         showToast(typeof msg === "string" ? msg : "Lỗi xác nhận nhận hàng", "error");
@@ -324,6 +326,7 @@ export function OrderDetail() {
         if (receivedFiles.length === 0 && invoiceFiles.length === 0) formData.append("confirm", "1");
         const res = await api.request("orderSuppliers.confirmReceive", { params: { id: osId }, formData });
         setConfirmModal({ open: false, osId: null });
+        showToast("Đã xác nhận nhận hàng. Tồn kho cửa hàng đã được cập nhật.", "success");
         const updatedStatus = res?.Status ?? res?.status ?? "Delivered";
         const updatedImages = res?.ReceiveImages ?? res?.receiveImages ?? [];
         setOrders((prev) =>
@@ -411,46 +414,55 @@ export function OrderDetail() {
 
   /** Xuất đơn riêng theo từng NCC để gửi cho nhà cung cấp */
   const handleExportOrderBySupplier = (os) => {
-    const w = window.open("", "_blank");
-    if (!w) return;
-    const storeName = stores.find((s) => s.id === order.storeId)?.name || order.storeName;
-    const total = (os.orderItems || []).reduce((sum, it) => sum + it.quantity * Number(it.price || 0), 0);
-    let html = `
-      <!DOCTYPE html><html><head><meta charset="utf-8"><title>Đơn #${order.id} - ${os.supplierName}</title>
-      <style>
-        body { font-family: Arial, sans-serif; padding: 20px; font-size: 14px; }
-        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background: #f5f5f5; }
-        .header { margin-bottom: 20px; }
-        .ncc-title { font-size: 16px; margin: 10px 0 5px; color: #1976d2; }
-        @media print { body { padding: 0; } }
-      </style></head><body>
-      <div class="header">
-        <h2>ĐƠN HÀNG THEO NCC</h2>
-        <p><strong>Đơn tổng #${order.id}</strong> | <strong>Cửa hàng:</strong> ${storeName} | <strong>Ngày đặt:</strong> ${order.orderDate}</p>
-        <p class="ncc-title"><strong>Nhà cung cấp:</strong> ${os.supplierName} | Trạng thái: ${os.status}</p>
-      </div>
-      <table>
-        <tr><th>Sản phẩm</th><th>Số lượng</th><th>Đơn vị</th><th>Đơn giá</th><th>Thành tiền</th></tr>
-    `;
-    (os.orderItems || []).forEach((it) => {
-      const subtotal = it.quantity * Number(it.price || 0);
-      html += `<tr><td>${it.productName}</td><td>${it.quantity}</td><td>${it.unit}</td><td>${Number(it.price).toLocaleString("vi-VN")} đ</td><td>${subtotal.toLocaleString("vi-VN")} đ</td></tr>`;
+    const storeId = order?.storeId ?? order?.StoreId;
+    const store = (stores || []).find((s) => String(s.id ?? s.Id) === String(storeId)) || {
+      name: order?.storeName ?? order?.StoreName,
+      address: "",
+      phone: "",
+    };
+    const supplierId = os?.supplierId ?? os?.SupplierId;
+    const supplier = (suppliers || []).find((x) => String(x.id ?? x.Id) === String(supplierId)) || null;
+    const ok = printOrderBySupplier(os, order, store, {
+      preparerName: currentUser?.name ?? currentUser?.Name ?? "",
+      supplier: supplier
+        ? {
+            name: supplier.name ?? supplier.Name,
+            address: supplier.address ?? supplier.Address,
+            phone: supplier.contact ?? supplier.Contact ?? supplier.phone ?? supplier.Phone,
+            email: supplier.email ?? supplier.Email,
+          }
+        : { name: os?.supplierName ?? os?.SupplierName },
     });
-    html += `
-      </table>
-      <p style="margin-top:12px;font-weight:bold;">Tổng tiền đơn NCC này: ${total.toLocaleString("vi-VN")} đ</p>
-      <p style="margin-top:8px;color:#666;">Giao dự kiến: ${os.expectedDeliveryDate || "-"}</p>
-      </body></html>
-    `;
-    w.document.write(html);
-    w.document.close();
-    w.focus();
-    setTimeout(() => {
-      w.print();
-      w.close();
-    }, 300);
+    if (!ok) showToast("Không mở được cửa sổ in (popup bị chặn).", "error");
+  };
+
+  const handleExportOrderBySupplierExcel = async (os) => {
+    try {
+      const storeId = order?.storeId ?? order?.StoreId;
+      const store = (stores || []).find((s) => String(s.id ?? s.Id) === String(storeId)) || {
+        name: order?.storeName ?? order?.StoreName,
+        address: "",
+        phone: "",
+      };
+      const supplierId = os?.supplierId ?? os?.SupplierId;
+      const supplier = (suppliers || []).find((x) => String(x.id ?? x.Id) === String(supplierId)) || null;
+      const storeWithSupplier = {
+        ...store,
+        supplier: supplier
+          ? {
+              name: supplier.name ?? supplier.Name,
+              address: supplier.address ?? supplier.Address,
+              phone: supplier.contact ?? supplier.Contact ?? supplier.phone ?? supplier.Phone,
+              email: supplier.email ?? supplier.Email,
+            }
+          : { name: os?.supplierName ?? os?.SupplierName },
+      };
+      const XLSX = await import("xlsx");
+      const ok = exportOrderToExcel(os, order, storeWithSupplier, null, XLSX);
+      if (!ok) showToast("Không thể xuất Excel.", "error");
+    } catch (e) {
+      showToast("Lỗi xuất Excel.", "error");
+    }
   };
 
   if (!order) {
@@ -570,9 +582,14 @@ export function OrderDetail() {
             </div>
             <div className="flex flex-shrink-0 flex-wrap items-center gap-4">
               {isStoreOrder && (
-                <Button size="sm" variant="outlined" className="flex items-center gap-1 whitespace-nowrap" onClick={() => handleExportOrderBySupplier(os)}>
-                  <DocumentArrowDownIcon className="w-4 h-4" /> Xuất đơn NCC / Gửi
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button size="sm" variant="outlined" className="flex items-center gap-1 whitespace-nowrap" onClick={() => handleExportOrderBySupplier(os)}>
+                    <DocumentArrowDownIcon className="w-4 h-4" /> Xuất đơn / In (mẫu)
+                  </Button>
+                  <Button size="sm" variant="outlined" className="flex items-center gap-1 whitespace-nowrap" onClick={() => handleExportOrderBySupplierExcel(os)}>
+                    <DocumentTextIcon className="w-4 h-4" /> Xuất Excel
+                  </Button>
+                </div>
               )}
               <Chip size="sm" color={osStatusColors[os.status ?? os.Status] || "gray"} value={os.status ?? os.Status} />
               {isAdmin && (

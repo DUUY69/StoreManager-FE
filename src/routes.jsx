@@ -23,7 +23,7 @@ export const dashboardRoutesConfig = [
   { path: "/home", element: <DashboardHome />, name: "Dashboard", icon: <HomeIcon {...icon} />, roles: ["Admin", "StoreUser", "SupplierUser"] },
   { path: "/suppliers", element: <Suppliers />, name: "Nhà cung cấp", icon: <TruckIcon {...icon} />, roles: ["Admin"] },
   { path: "/categories", element: <Categories />, name: "Danh mục", icon: <FolderIcon {...icon} />, roles: ["Admin"] },
-  { path: "/products", element: <Products />, name: "Sản phẩm", icon: <CubeIcon {...icon} />, roles: ["Admin"] },
+  { path: "/products", element: <Products />, name: "Sản phẩm", icon: <CubeIcon {...icon} />, roles: ["Admin", "SupplierUser"] },
   { path: "/stores", element: <Stores />, name: "Cửa hàng", icon: <BuildingStorefrontIcon {...icon} />, roles: ["Admin"] },
   { path: "/users", element: <Users />, name: "User", icon: <UserCircleIcon {...icon} />, roles: ["Admin"] },
   { path: "/create-order", element: <CreateOrder />, name: "Tạo đơn", icon: <PlusCircleIcon {...icon} />, roles: ["StoreUser"] },

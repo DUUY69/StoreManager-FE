@@ -63,7 +63,10 @@
   "warehouse": {
     "stock": { "method": "GET", "path": "/api/warehouse/stock", "desc": "Tồn kho theo cửa hàng (Admin/Store)" },
     "transactions": { "method": "GET", "path": "/api/warehouse/transactions", "desc": "Lịch sử nhập/xuất kho (Admin/Store)" },
-    "supplierStock": { "method": "GET", "path": "/api/warehouse/supplier-stock", "desc": "Tồn kho tại NCC (chỉ SupplierUser)" }
+    "supplierStock": { "method": "GET", "path": "/api/warehouse/supplier-stock", "desc": "Tồn kho tại NCC (chỉ SupplierUser)" },
+    "supplierTransactions": { "method": "GET", "path": "/api/warehouse/supplier-transactions", "desc": "Lịch sử nhập/xuất tồn kho NCC (chỉ SupplierUser)" },
+    "updateSupplierStock": { "method": "POST", "path": "/api/warehouse/supplier-stock", "desc": "NCC nhập tồn kho tay (thêm/set số lượng)" },
+    "adjust": { "method": "POST", "path": "/api/warehouse/adjust", "desc": "Cửa hàng điều chỉnh tồn kho (thêm/bớt)" }
   },
   "reports": {
     "summary": { "method": "GET", "path": "/api/reports/summary", "desc": "Báo cáo tổng hợp" }

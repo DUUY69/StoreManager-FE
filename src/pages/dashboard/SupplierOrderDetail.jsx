@@ -5,6 +5,7 @@ import { ArrowLeftIcon, DocumentArrowDownIcon, PhotoIcon, DocumentTextIcon } fro
 import { useData } from "@/context/DataContext";
 import { useAuth, useToast } from "@/context";
 import api from "@/api";
+import { printOrderBySupplier, exportOrderToExcel } from "@/utils/orderExport";
 
 // Đơn con NCC: 5 trạng thái — Chờ, Chấp nhận, Từ chối, Đang giao, Giao hoàn thành
 const osStatusColors = { Pending: "indigo", Accepted: "blue", Rejected: "red", Delivering: "orange", Delivered: "green" };
@@ -73,12 +74,14 @@ function OrderSupplierTimeline({ os }) {
 export function SupplierOrderDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { orders, setOrders, stores, useApi, refetchOrders } = useData();
+  const { orders, setOrders, stores, suppliers, useApi, refetchOrders } = useData();
   const { currentUser } = useAuth();
   const { showToast } = useToast();
   const [selectedStatus, setSelectedStatus] = useState("");
   const [updating, setUpdating] = useState(false);
   const [lightbox, setLightbox] = useState(null);
+  const [osDetail, setOsDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   const osId = Number(id);
   let found = null;
@@ -98,16 +101,37 @@ export function SupplierOrderDetail() {
   }
 
   const supplierIdUser = currentUser?.supplierId ?? currentUser?.SupplierId;
-  const isMyOrder = found && Number(found.supplierId ?? found.SupplierId) === Number(supplierIdUser);
+  const isMyOrder = (found || osDetail) && Number((osDetail ?? found).supplierId ?? (osDetail ?? found).SupplierId) === Number(supplierIdUser);
   const orderStatus = order?.status ?? order?.Status ?? "";
   const visibleStatuses = ["Accepted", "Completed"];
-  const isParentVisibleToSupplier = visibleStatuses.includes(orderStatus);
+  const isParentVisibleToSupplier = order ? visibleStatuses.includes(orderStatus) : true;
 
   useEffect(() => {
-    if (found) setSelectedStatus(((found.status ?? found.Status) || "Pending"));
-  }, [found?.id, found?.status, found?.Status]);
+    const os = osDetail ?? found;
+    if (os) setSelectedStatus(((os.status ?? os.Status) || "Pending"));
+  }, [found?.id, found?.status, found?.Status, osDetail?.id, osDetail?.status, osDetail?.Status]);
 
-  if (!found || !isMyOrder || !isParentVisibleToSupplier) {
+  useEffect(() => {
+    if (!useApi || !id || !osId) return;
+    let cancelled = false;
+    setDetailLoading(true);
+    api.get("supplierOrders.getById", { params: { id: osId } })
+      .then((data) => { if (!cancelled && data) setOsDetail(data); })
+      .catch(() => { if (!cancelled) setOsDetail(null); })
+      .finally(() => { if (!cancelled) setDetailLoading(false); });
+    return () => { cancelled = true; };
+  }, [useApi, id, osId]);
+
+  if (detailLoading && !osDetail && !found) {
+    return (
+      <div className="mt-12">
+        <Typography color="gray">Đang tải chi tiết đơn...</Typography>
+        <Button className="mt-2" variant="text" onClick={() => navigate("/dashboard/supplier-orders")}>Quay lại</Button>
+      </div>
+    );
+  }
+
+  if ((!found && !osDetail) || !isMyOrder) {
     return (
       <div className="mt-12">
         <Typography>Không tìm thấy đơn hoặc không có quyền (đơn tổng chưa được chấp nhận hoặc đã bị từ chối).</Typography>
@@ -115,6 +139,9 @@ export function SupplierOrderDetail() {
       </div>
     );
   }
+
+  const os = osDetail ?? found;
+  const displayOrder = order ?? { id: os?.orderId ?? os?.OrderId, storeName: "—", status: "Accepted", orderDate: "" };
 
   const updateStatus = async (newStatus, note) => {
     const withNote = newStatus === "Rejected" && note != null;
@@ -143,6 +170,7 @@ export function SupplierOrderDetail() {
       try {
         await api.patch("supplierOrders.updateStatus", payload, { params: { id: osId } });
         applyLocal();
+        if (osDetail) setOsDetail((prev) => (prev ? { ...prev, status: newStatus, ...(withNote && { note }) } : null));
       } catch (e) {
         showToast(e.message || "Lỗi cập nhật trạng thái", "error");
       } finally {
@@ -154,60 +182,72 @@ export function SupplierOrderDetail() {
   };
 
   const handleApplyStatus = () => {
-    const current = found.status ?? found.Status ?? "Pending";
+    const current = os.status ?? os.Status ?? "Pending";
     if (!selectedStatus || selectedStatus === current) return;
     if (selectedStatus === "Rejected") {
-      const note = window.prompt("Lý do từ chối (tùy chọn):\nVí dụ: Hết hàng, không cung cấp được.", found.note ?? found.Note ?? "");
+      const note = window.prompt("Lý do từ chối (tùy chọn):\nVí dụ: Hết hàng, không cung cấp được.", os.note ?? os.Note ?? "");
       if (note !== null) updateStatus("Rejected", note);
     } else {
       updateStatus(selectedStatus);
     }
   };
 
-  const storeName = order?.storeName ?? order?.StoreName ?? stores?.find((s) => (s.id ?? s.Id) === (order?.storeId ?? order?.StoreId))?.name ?? "";
+  const storeName = order?.storeName ?? order?.StoreName ?? stores?.find((s) => (s.id ?? s.Id) === (order?.storeId ?? order?.StoreId))?.name ?? displayOrder?.storeName ?? displayOrder?.StoreName ?? "—";
 
   const handleExportOrderBySupplier = () => {
-    const w = window.open("", "_blank");
-    if (!w || !order) return;
-    const os = found;
-    const total = (os.orderItems || os.OrderItems || []).reduce((sum, it) => sum + (it.quantity ?? it.Quantity) * Number((it.price ?? it.Price) || 0), 0);
-    let html = `
-      <!DOCTYPE html><html><head><meta charset="utf-8"><title>Đơn #${order.id ?? order.Id} - ${os.supplierName ?? os.SupplierName}</title>
-      <style>
-        body { font-family: Arial, sans-serif; padding: 20px; font-size: 14px; }
-        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background: #f5f5f5; }
-        .header { margin-bottom: 20px; }
-        .ncc-title { font-size: 16px; margin: 10px 0 5px; color: #1976d2; }
-        @media print { body { padding: 0; } }
-      </style></head><body>
-      <div class="header">
-        <h2>ĐƠN HÀNG THEO NCC</h2>
-        <p><strong>Đơn tổng #${order.id ?? order.Id}</strong> | <strong>Cửa hàng:</strong> ${storeName} | <strong>Ngày đặt:</strong> ${order.orderDate ?? order.OrderDate}</p>
-        <p class="ncc-title"><strong>Nhà cung cấp:</strong> ${os.supplierName ?? os.SupplierName} | Trạng thái: ${os.status ?? os.Status}</p>
-      </div>
-      <table>
-        <tr><th>Sản phẩm</th><th>Số lượng</th><th>Đơn vị</th><th>Đơn giá</th><th>Thành tiền</th></tr>
-    `;
-    (os.orderItems || os.OrderItems || []).forEach((it) => {
-      const q = it.quantity ?? it.Quantity;
-      const p = Number((it.price ?? it.Price) || 0);
-      const subtotal = q * p;
-      html += `<tr><td>${it.productName ?? it.ProductName}</td><td>${q}</td><td>${it.unit ?? it.Unit}</td><td>${Number(p).toLocaleString("vi-VN")} đ</td><td>${subtotal.toLocaleString("vi-VN")} đ</td></tr>`;
+    if (!os) return;
+    const storeId = displayOrder?.storeId ?? displayOrder?.StoreId;
+    const store = (stores || []).find((s) => String(s.id ?? s.Id) === String(storeId)) || {
+      name: storeName,
+      address: "",
+      phone: "",
+    };
+    const supplierId = os?.supplierId ?? os?.SupplierId;
+    const supplier = (suppliers || []).find((x) => String(x.id ?? x.Id) === String(supplierId)) || null;
+    const ok = printOrderBySupplier(os, displayOrder, store, {
+      preparerName: currentUser?.name ?? currentUser?.Name ?? "",
+      supplier: supplier
+        ? {
+            name: supplier.name ?? supplier.Name,
+            address: supplier.address ?? supplier.Address,
+            phone: supplier.contact ?? supplier.Contact ?? supplier.phone ?? supplier.Phone,
+            email: supplier.email ?? supplier.Email,
+          }
+        : { name: os?.supplierName ?? os?.SupplierName },
     });
-    html += `
-      </table>
-      <p style="margin-top:12px;font-weight:bold;">Tổng cộng đơn NCC này: ${total.toLocaleString("vi-VN")} đ</p>
-      </body></html>
-    `;
-    w.document.write(html);
-    w.document.close();
-    w.focus();
-    setTimeout(() => { w.print(); w.close(); }, 300);
+    if (!ok) showToast("Không mở được cửa sổ in (popup bị chặn).", "error");
   };
 
-  const os = found;
+  const handleExportOrderBySupplierExcel = async () => {
+    if (!os) return;
+    try {
+      const storeId = displayOrder?.storeId ?? displayOrder?.StoreId;
+      const store = (stores || []).find((s) => String(s.id ?? s.Id) === String(storeId)) || {
+        name: storeName,
+        address: "",
+        phone: "",
+      };
+      const supplierId = os?.supplierId ?? os?.SupplierId;
+      const supplier = (suppliers || []).find((x) => String(x.id ?? x.Id) === String(supplierId)) || null;
+      const storeWithSupplier = {
+        ...store,
+        supplier: supplier
+          ? {
+              name: supplier.name ?? supplier.Name,
+              address: supplier.address ?? supplier.Address,
+              phone: supplier.contact ?? supplier.Contact ?? supplier.phone ?? supplier.Phone,
+              email: supplier.email ?? supplier.Email,
+            }
+          : { name: os?.supplierName ?? os?.SupplierName },
+      };
+      const XLSX = await import("xlsx");
+      const ok = exportOrderToExcel(os, displayOrder, storeWithSupplier, null, XLSX);
+      if (!ok) showToast("Không thể xuất Excel.", "error");
+    } catch (e) {
+      showToast("Lỗi xuất Excel.", "error");
+    }
+  };
+
   const orderItems = os.orderItems ?? os.OrderItems ?? [];
   const receiveImages = os.receiveImages ?? os.ReceiveImages ?? [];
 
@@ -217,20 +257,25 @@ export function SupplierOrderDetail() {
         <Button variant="text" className="flex items-center gap-1 w-fit" onClick={() => navigate("/dashboard/supplier-orders")}>
           <ArrowLeftIcon className="w-4 h-4" /> Quay lại danh sách
         </Button>
-        <Button size="sm" variant="outlined" className="flex items-center gap-1 w-fit" onClick={handleExportOrderBySupplier}>
-          <DocumentArrowDownIcon className="w-4 h-4" /> Xuất đơn NCC / Gửi
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="outlined" className="flex items-center gap-1 w-fit" onClick={handleExportOrderBySupplier}>
+            <DocumentArrowDownIcon className="w-4 h-4" /> Xuất đơn / In (mẫu)
+          </Button>
+          <Button size="sm" variant="outlined" className="flex items-center gap-1 w-fit" onClick={handleExportOrderBySupplierExcel}>
+            <DocumentTextIcon className="w-4 h-4" /> Xuất Excel
+          </Button>
+        </div>
       </div>
 
       <Card className="border border-blue-gray-100 mb-6">
         <CardHeader className="p-4 border-b flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
-            <Typography variant="h5">Đơn hàng #{order.id ?? order.Id}</Typography>
-            <Typography variant="small" color="gray">{storeName} · {order.orderDate ?? order.OrderDate}</Typography>
-            <Typography variant="small" className="block mt-1">Đơn NCC #{os.id ?? os.Id}. Trạng thái đơn tổng: {orderStatusLabel(order.status ?? order.Status)}.</Typography>
+            <Typography variant="h5">Đơn hàng #{displayOrder.id ?? displayOrder.Id}</Typography>
+            <Typography variant="small" color="gray">{storeName} · {displayOrder.orderDate ?? displayOrder.OrderDate}</Typography>
+            <Typography variant="small" className="block mt-1">Đơn NCC #{os.id ?? os.Id}. Trạng thái đơn tổng: {orderStatusLabel(displayOrder.status ?? displayOrder.Status)}.</Typography>
           </div>
           <div className="flex-shrink-0 flex flex-wrap items-center gap-2">
-            <Chip color={(order.status ?? order.Status) === "Completed" ? "green" : (order.status ?? order.Status) === "Rejected" ? "red" : (order.status ?? order.Status) === "Accepted" ? "amber" : "blue"} value={orderStatusLabel(order.status ?? order.Status)} />
+            <Chip color={(displayOrder.status ?? displayOrder.Status) === "Completed" ? "green" : (displayOrder.status ?? displayOrder.Status) === "Rejected" ? "red" : (displayOrder.status ?? displayOrder.Status) === "Accepted" ? "amber" : "blue"} value={orderStatusLabel(displayOrder.status ?? displayOrder.Status)} />
           </div>
         </CardHeader>
         <CardBody className="p-4">
@@ -246,9 +291,14 @@ export function SupplierOrderDetail() {
             <OrderSupplierTimeline os={os} />
           </div>
           <div className="flex-shrink-0 flex flex-wrap items-center gap-4">
-            <Button size="sm" variant="outlined" className="flex items-center gap-1 whitespace-nowrap" onClick={handleExportOrderBySupplier}>
-              <DocumentArrowDownIcon className="w-4 h-4" /> Xuất đơn NCC / Gửi
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="outlined" className="flex items-center gap-1 whitespace-nowrap" onClick={handleExportOrderBySupplier}>
+                <DocumentArrowDownIcon className="w-4 h-4" /> Xuất đơn / In (mẫu)
+              </Button>
+              <Button size="sm" variant="outlined" className="flex items-center gap-1 whitespace-nowrap" onClick={handleExportOrderBySupplierExcel}>
+                <DocumentTextIcon className="w-4 h-4" /> Xuất Excel
+              </Button>
+            </div>
             <Chip size="sm" color={(osStatusColors[os.status ?? os.Status] || "gray")} value={os.status ?? os.Status} />
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex flex-col gap-1">
@@ -332,7 +382,8 @@ export function SupplierOrderDetail() {
             <thead>
               <tr>
                 <th className="text-left py-2 px-3"><Typography variant="small" className="font-bold text-blue-gray-500">Sản phẩm</Typography></th>
-                <th className="text-left py-2 px-3"><Typography variant="small" className="font-bold text-blue-gray-500">Số lượng</Typography></th>
+                <th className="text-left py-2 px-3"><Typography variant="small" className="font-bold text-blue-gray-500">Yêu cầu</Typography></th>
+                <th className="text-left py-2 px-3"><Typography variant="small" className="font-bold text-blue-gray-500">Tồn còn</Typography></th>
                 <th className="text-left py-2 px-3"><Typography variant="small" className="font-bold text-blue-gray-500">Đơn giá</Typography></th>
                 <th className="text-right py-2 px-3"><Typography variant="small" className="font-bold text-blue-gray-500">Thành tiền</Typography></th>
               </tr>
@@ -341,10 +392,22 @@ export function SupplierOrderDetail() {
               {orderItems.map((item, idx) => {
                 const q = item.quantity ?? item.Quantity ?? 0;
                 const p = Number((item.price ?? item.Price) || 0);
+                const remaining = item.stockRemaining ?? item.StockRemaining;
+                const hasStock = remaining != null;
+                const enough = hasStock && Number(remaining) >= Number(q);
                 return (
                   <tr key={item.id ?? item.Id ?? idx}>
                     <td className="py-2 px-3"><Typography variant="small">{item.productName ?? item.ProductName}</Typography></td>
                     <td className="py-2 px-3"><Typography variant="small">{q} {item.unit ?? item.Unit}</Typography></td>
+                    <td className="py-2 px-3">
+                      {hasStock ? (
+                        <Typography variant="small" className={enough ? "text-green-700 font-medium" : "text-amber-700"}>
+                          {Number(remaining).toLocaleString("vi-VN")} {enough ? "✓ Đủ" : "— Thiếu"}
+                        </Typography>
+                      ) : (
+                        <Typography variant="small" color="gray">—</Typography>
+                      )}
+                    </td>
                     <td className="py-2 px-3"><Typography variant="small">{p.toLocaleString("vi-VN")} đ</Typography></td>
                     <td className="py-2 px-3 text-right"><Typography variant="small">{(q * p).toLocaleString("vi-VN")} đ</Typography></td>
                   </tr>
