@@ -13,7 +13,9 @@ yarn.lock
 node_modules
 dist
 dist-ssr
+dist-*/
 *.local
+*.zip
 
 # Env (giữ .env.example, không đẩy .env)
 .env
