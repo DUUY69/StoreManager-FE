@@ -16,6 +16,7 @@ import { BrowserRouter } from "react-router-dom";
 import { ThemeProvider } from "@material-tailwind/react";
 import { MaterialTailwindControllerProvider, AuthProvider, DataProvider, ToastProvider } from "@/context";
 import "../public/css/tailwind.css";
+import "./styles/mobile-touch.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>

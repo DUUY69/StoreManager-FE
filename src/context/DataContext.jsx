@@ -1,12 +1,4 @@
 import React from "react";
-import {
-  suppliersData,
-  categoriesData,
-  productsData,
-  storesData,
-  usersData,
-  ordersData as initialOrders,
-} from "@/data";
 import api from "@/api";
 
 const DataContext = React.createContext(null);
@@ -15,7 +7,16 @@ const ORDERS_CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 giờ - dùng cache đơn k
 
 function normOrderItem(it) {
   if (!it) return it;
-  return { productId: it.productId ?? it.ProductId, productName: it.productName ?? it.ProductName, quantity: it.quantity ?? it.Quantity, unit: it.unit ?? it.Unit, price: it.price ?? it.Price };
+  return {
+    id: it.id ?? it.Id,
+    productId: it.productId ?? it.ProductId,
+    productName: it.productName ?? it.ProductName,
+    quantity: it.quantity ?? it.Quantity,
+    receivedQuantity: it.receivedQuantity ?? it.ReceivedQuantity ?? null,
+    unit: it.unit ?? it.Unit,
+    price: it.price ?? it.Price,
+    note: it.note ?? it.Note ?? null,
+  };
 }
 function normReceiveImage(img) {
   if (!img) return img;
@@ -40,6 +41,8 @@ function normOrderSupplier(os) {
     actualDeliveryDate: os.actualDeliveryDate ?? os.ActualDeliveryDate,
     confirmDate: os.confirmDate ?? os.ConfirmDate,
     note: os.note ?? os.Note,
+    receiveNote: os.receiveNote ?? os.ReceiveNote ?? null,
+    receiveQtyAdjusted: !!(os.receiveQtyAdjusted ?? os.ReceiveQtyAdjusted),
     receiveImages: (os.receiveImages ?? os.ReceiveImages ?? []).map(normReceiveImage),
   };
 }
@@ -56,20 +59,14 @@ function normalizeOrders(arr) {
 }
 
 function useInitialState() {
-  const useApi = api.USE_API;
-  const [suppliers, setSuppliers] = React.useState(() => (useApi ? [] : [...suppliersData]));
-  const [categories, setCategories] = React.useState(() => (useApi ? [] : [...categoriesData]));
-  const [products, setProducts] = React.useState(() => (useApi ? [] : [...productsData]));
-  const [stores, setStores] = React.useState(() => (useApi ? [] : [...storesData]));
-  const [users, setUsers] = React.useState(() => (useApi ? [] : [...usersData]));
-  const [orders, setOrders] = React.useState(() =>
-    useApi ? [] : JSON.parse(JSON.stringify(initialOrders))
-  );
+  const [suppliers, setSuppliers] = React.useState(() => []);
+  const [products, setProducts] = React.useState(() => []);
+  const [stores, setStores] = React.useState(() => []);
+  const [users, setUsers] = React.useState(() => []);
+  const [orders, setOrders] = React.useState(() => []);
   return {
     suppliers,
     setSuppliers,
-    categories,
-    setCategories,
     products,
     setProducts,
     stores,
@@ -86,8 +83,6 @@ export function DataProvider({ children }) {
   const {
     suppliers,
     setSuppliers,
-    categories,
-    setCategories,
     products,
     setProducts,
     stores,
@@ -110,16 +105,6 @@ export function DataProvider({ children }) {
       console.error("refetchSuppliers", e);
     }
   }, [setSuppliers]);
-
-  const refetchCategories = React.useCallback(async () => {
-    if (!api.USE_API) return;
-    try {
-      const data = await api.get("categories.list");
-      setCategories(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error("refetchCategories", e);
-    }
-  }, [setCategories]);
 
   const refetchProducts = React.useCallback(async () => {
     if (!api.USE_API) return;
@@ -175,24 +160,25 @@ export function DataProvider({ children }) {
     if (!api.USE_API || !api.BASE_URL) return;
     setApiError(null);
     try {
-      const [s, c, p, st, u, o] = await Promise.all([
+      const [s, p, st, u, o] = await Promise.all([
         api.get("suppliers.list").then((d) => (Array.isArray(d) ? d : [])),
-        api.get("categories.list").then((d) => (Array.isArray(d) ? d : [])),
         api.get("products.list").then((d) => (Array.isArray(d) ? d : [])),
         api.get("stores.list").then((d) => (Array.isArray(d) ? d : [])),
         api.get("users.list").then((d) => (Array.isArray(d) ? d : [])),
         api.get("orders.list", { query: { _: Date.now() } }).then((d) => (Array.isArray(d) ? normalizeOrders(d) : [])),
       ]);
       setSuppliers(s);
-      setCategories(c);
       setProducts(p);
       setStores(st);
       setUsers(u);
       // Luôn dùng dữ liệu từ API khi load/refetch (không ghi đè bằng cache)
       setOrders(o);
     } catch (err) {
+      const raw = String(err?.message || "").toLowerCase();
       if (err.status === 401) {
         setApiError("Phiên đăng nhập hết hạn hoặc không hợp lệ. Vui lòng đăng xuất và đăng nhập lại (email + mật khẩu).");
+      } else if (raw.includes("failed to fetch") || raw.includes("network") || raw.includes("cors")) {
+        setApiError("Không kết nối được máy chủ. Kiểm tra API đang chạy hoặc thử tải lại trang.");
       } else {
         setApiError(err.message || "Lỗi tải dữ liệu");
       }
@@ -200,7 +186,7 @@ export function DataProvider({ children }) {
     } finally {
       setApiLoading(false);
     }
-  }, [setSuppliers, setCategories, setProducts, setStores, setUsers, setOrders]);
+  }, [setSuppliers, setProducts, setStores, setUsers, setOrders]);
 
   React.useEffect(() => {
     if (!api.USE_API || !api.BASE_URL) {
@@ -226,12 +212,12 @@ export function DataProvider({ children }) {
     setApiLoading(false);
   }, [loadInitialData]);
 
+  const clearApiError = React.useCallback(() => setApiError(null), []);
+
   const value = React.useMemo(
     () => ({
       suppliers,
       setSuppliers,
-      categories,
-      setCategories,
       products,
       setProducts,
       stores,
@@ -242,10 +228,10 @@ export function DataProvider({ children }) {
       setOrders,
       apiLoading,
       apiError,
+      clearApiError,
       useApi: api.USE_API,
       refetchInitialData,
       refetchSuppliers,
-      refetchCategories,
       refetchProducts,
       refetchStores,
       refetchUsers,
@@ -253,16 +239,15 @@ export function DataProvider({ children }) {
     }),
     [
       suppliers,
-      categories,
       products,
       stores,
       users,
       orders,
       apiLoading,
       apiError,
+      clearApiError,
       refetchInitialData,
       refetchSuppliers,
-      refetchCategories,
       refetchProducts,
       refetchStores,
       refetchUsers,

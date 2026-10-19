@@ -6,7 +6,6 @@ import {
   Button,
   IconButton,
   Breadcrumbs,
-  Input,
   Menu,
   MenuHandler,
   MenuList,
@@ -22,6 +21,7 @@ import {
   TruckIcon,
   CheckCircleIcon,
   Cog6ToothIcon,
+  ExclamationTriangleIcon,
 } from "@heroicons/react/24/solid";
 import {
   useMaterialTailwindController,
@@ -37,46 +37,71 @@ function useOrderNotifications() {
 
   return useMemo(() => {
     const list = [];
-    const now = new Date().toISOString().slice(0, 10);
+
+    const oss = (o) => o.orderSuppliers || o.OrderSuppliers || [];
 
     if (isAdmin || isStoreUser) {
-      const myOrders = isStoreUser
-        ? orders.filter((o) => o.storeId === currentUser?.storeId)
-        : orders;
+      const sid = currentUser?.storeId ?? currentUser?.StoreId;
+      const myOrders = isStoreUser ? orders.filter((o) => (o.storeId ?? o.StoreId) === sid) : orders;
+      if (isAdmin) {
+        myOrders.forEach((o) => {
+          const oid = o.id ?? o.Id;
+          oss(o).forEach((os) => {
+            const st = (os.status ?? os.Status ?? "").toLowerCase();
+            if (st !== "delivered") return;
+            const flagged = !!(os.receiveQtyAdjusted ?? os.ReceiveQtyAdjusted);
+            const note = String(os.receiveNote ?? os.ReceiveNote ?? "").trim();
+            const imgs = os.receiveImages ?? os.ReceiveImages ?? [];
+            const hasImages = Array.isArray(imgs) && imgs.length > 0;
+            if (!flagged && !note && !hasImages) return;
+            list.push({
+              id: `receive-adj-${os.id ?? os.Id}`,
+              type: "receive_adjust",
+              link: `/dashboard/orders/${oid}`,
+              title: `Nhận thiếu/thừa hoặc ghi chú · đơn #${oid}`,
+              sub: `${os.supplierName ?? os.SupplierName ?? "NCC"} · ${o.storeName ?? o.StoreName ?? "CH"}${note ? ` — ${note.slice(0, 72)}${note.length > 72 ? "…" : ""}` : flagged ? " — SL thực nhận khác đơn" : hasImages ? " — Có ảnh chứng từ" : ""}`,
+              icon: ExclamationTriangleIcon,
+            });
+          });
+        });
+      }
       myOrders.forEach((o) => {
-        if (o.status === "Pending") {
+        const oid = o.id ?? o.Id;
+        const oSt = o.status ?? o.Status;
+        if (oSt === "Pending") {
           list.push({
-            id: `order-submit-${o.id}`,
+            id: `order-submit-${oid}`,
             type: "order",
-            link: `/dashboard/orders/${o.id}`,
-            title: `Đơn #${o.id} cần duyệt`,
-            sub: `${o.storeName || "Cửa hàng"} · ${o.orderDate || ""}`,
+            link: `/dashboard/orders/${oid}`,
+            title: `Đơn #${oid} cần duyệt`,
+            sub: `${(o.storeName ?? o.StoreName) || "Cửa hàng"} · ${(o.orderDate ?? o.OrderDate) || ""}`,
             icon: ClipboardDocumentListIcon,
           });
         }
-        if (o.status === "Accepted" && (o.orderSuppliers || []).length > 0) {
-          const allDelivered = (o.orderSuppliers || []).every(
-            (os) => os.status === "Delivered" || os.status === "Rejected"
+        if (oSt === "Accepted" && oss(o).length > 0) {
+          const allDelivered = oss(o).every(
+            (os) => (os.status ?? os.Status) === "Delivered" || (os.status ?? os.Status) === "Rejected"
           );
           if (allDelivered) {
             list.push({
-              id: `order-confirm-${o.id}`,
+              id: `order-confirm-${oid}`,
               type: "order",
-              link: `/dashboard/orders/${o.id}`,
-              title: `Đơn #${o.id} sẵn sàng đóng`,
-              sub: `Tất cả NCC đã giao · ${o.storeName || ""}`,
+              link: `/dashboard/orders/${oid}`,
+              title: `Đơn #${oid} sẵn sàng đóng`,
+              sub: `Tất cả NCC đã giao · ${(o.storeName ?? o.StoreName) || ""}`,
               icon: CheckCircleIcon,
             });
           }
         }
-        (o.orderSuppliers || []).forEach((os) => {
-          if (os.status === "Delivered") {
+        oss(o).forEach((os) => {
+          const osSt = os.status ?? os.Status;
+          if (osSt === "Delivering") {
             list.push({
-              id: `os-receive-${os.id}`,
+              id: `os-receive-${os.id ?? os.Id}`,
               type: "order",
-              link: `/dashboard/orders/${o.id}`,
-              title: `Xác nhận nhận hàng: Đơn #${o.id} - NCC`,
-              sub: `Đơn con #${os.id} đã giao, cần xác nhận & nhập kho`,
+              link: `/dashboard/orders/${oid}`,
+              title: `Xác nhận nhận hàng: Đơn #${oid} - NCC`,
+              sub: `Đơn con #${os.id ?? os.Id} đang giao, cần xác nhận nhận hàng`,
               icon: TruckIcon,
             });
           }
@@ -85,23 +110,36 @@ function useOrderNotifications() {
     }
 
     if (isSupplierUser && currentUser?.supplierId != null) {
-      orders.filter((o) => o.status === "Accepted" || o.status === "Completed").forEach((o) => {
-        (o.orderSuppliers || []).forEach((os) => {
-          if (os.supplierId === currentUser.supplierId && os.status === "Pending") {
-            list.push({
-              id: `supplier-pending-${os.id}`,
-              type: "supplier_order",
-              link: `/dashboard/supplier-orders/${os.id}`,
-              title: `Đơn NCC #${os.id} cần xử lý`,
-              sub: `${o.storeName || "Cửa hàng"} · Đơn tổng #${o.id}`,
-              icon: ClipboardDocumentListIcon,
-            });
-          }
+      const supId = currentUser.supplierId ?? currentUser.SupplierId;
+      orders
+        .filter((o) => {
+          const s = o.status ?? o.Status;
+          return s === "Accepted" || s === "Completed";
+        })
+        .forEach((o) => {
+          const oid = o.id ?? o.Id;
+          oss(o).forEach((os) => {
+            if (Number(os.supplierId ?? os.SupplierId) === Number(supId) && (os.status ?? os.Status) === "Pending") {
+              list.push({
+                id: `supplier-pending-${os.id ?? os.Id}`,
+                type: "supplier_order",
+                link: `/dashboard/supplier-orders/${os.id ?? os.Id}`,
+                title: `Đơn NCC #${os.id ?? os.Id} cần xử lý`,
+                sub: `${(o.storeName ?? o.StoreName) || "Cửa hàng"} · Đơn tổng #${oid}`,
+                icon: ClipboardDocumentListIcon,
+              });
+            }
+          });
         });
-      });
     }
 
-    return list.slice(0, 10);
+    list.sort((a, b) => {
+      const pa = a.type === "receive_adjust" ? 0 : 1;
+      const pb = b.type === "receive_adjust" ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      return 0;
+    });
+    return list.slice(0, 30);
   }, [orders, currentUser, isAdmin, isStoreUser, isSupplierUser]);
 }
 
@@ -112,11 +150,33 @@ export function DashboardNavbar() {
   const navigate = useNavigate();
   const { currentUser, logout } = useAuth();
   const notifications = useOrderNotifications();
-  const [layout, page] = pathname.split("/").filter((el) => el !== "");
+  const segments = pathname.split("/").filter((el) => el !== "");
+  const page = segments[1] || "";
+  const pageLabels = {
+    home: "Tổng quan",
+    orders: "Danh sách đơn",
+    "create-order": "Tạo đơn",
+    suppliers: "Nhà cung cấp",
+    products: "Sản phẩm",
+    stores: "Cửa hàng",
+    users: "Người dùng",
+    reports: "Báo cáo",
+    warehouse: "Kho",
+    settings: "Cài đặt",
+    "eod-checkin": "Kiểm kho cuối ngày",
+    "eod-monthly-matrix": "Tồn kiểm kê tháng",
+    "supplier-orders": "Đơn NCC",
+    "supplier-orders-admin": "Đơn NCC (Admin)",
+  };
+  let pageLabel = pageLabels[page] || (page ? page.replace(/-/g, " ") : "Tổng quan");
+  if (page === "orders" && segments[2] && /^\d+$/.test(segments[2])) pageLabel = `Chi tiết đơn #${segments[2]}`;
+  if ((page === "supplier-orders" || page === "supplier-orders-admin") && segments[2] && /^\d+$/.test(segments[2])) {
+    pageLabel = `Đơn NCC #${segments[2]}`;
+  }
 
   const handleLogout = () => {
     logout();
-    navigate("/auth/sign-in");
+    navigate("/lcs");
   };
 
   const handleNotificationClick = (link) => {
@@ -134,77 +194,43 @@ export function DashboardNavbar() {
       fullWidth
       blurred={fixedNavbar}
     >
-      <div className="flex flex-col-reverse justify-between gap-6 md:flex-row md:items-center">
-        <div className="capitalize">
-          <Breadcrumbs
-            className={`bg-transparent p-0 transition-all ${
-              fixedNavbar ? "mt-1" : ""
-            }`}
-          >
-            <Link to="/dashboard">
-              <Typography
-                variant="small"
-                color="blue-gray"
-                className="font-normal opacity-50 transition-all hover:text-blue-500 hover:opacity-100"
-              >
-                {layout}
-              </Typography>
-            </Link>
-            <Typography
-              variant="small"
-              color="blue-gray"
-              className="font-normal"
-            >
-              {page || "home"}
-            </Typography>
-          </Breadcrumbs>
-          <Typography variant="h6" color="blue-gray">
-            {page || "Dashboard"}
-          </Typography>
-        </div>
-        <div className="flex items-center">
-          <div className="mr-auto md:mr-4 md:w-56">
-            <Input label="Search" />
-          </div>
+      <div className="flex items-center justify-between gap-2">
+        {/* ── Left: hamburger + breadcrumb ── */}
+        <div className="flex items-center gap-2 min-w-0">
           <IconButton
             variant="text"
             color="blue-gray"
-            className="grid xl:hidden"
+            className="xl:hidden shrink-0"
             onClick={() => setOpenSidenav(dispatch, !openSidenav)}
           >
             <Bars3Icon strokeWidth={3} className="h-6 w-6 text-blue-gray-500" />
           </IconButton>
-          <Menu>
-            <MenuHandler>
-              <Button
-                variant="text"
-                color="blue-gray"
-                className="hidden items-center gap-1 px-4 xl:flex normal-case"
-              >
-                <UserCircleIcon className="h-5 w-5 text-blue-gray-500" />
-                {currentUser?.name || "User"}
-              </Button>
-            </MenuHandler>
-            <MenuList>
-              <MenuItem className="flex items-center gap-2" disabled>
-                <Typography variant="small">{currentUser?.name ?? ""}</Typography>
-                <Typography variant="small" color="gray">({currentUser?.email ?? ""})</Typography>
-              </MenuItem>
-              <MenuItem onClick={() => navigate("/dashboard/settings")} className="flex items-center gap-2">
-                <Cog6ToothIcon className="h-5 w-5" />
-                Cài đặt
-              </MenuItem>
-              <MenuItem onClick={handleLogout} className="flex items-center gap-2">
-                <ArrowRightOnRectangleIcon className="h-5 w-5" />
-                Đăng xuất
-              </MenuItem>
-            </MenuList>
-          </Menu>
-          <Link to="/auth/sign-in" className="xl:hidden">
-            <IconButton variant="text" color="blue-gray">
-              <UserCircleIcon className="h-5 w-5 text-blue-gray-500" />
-            </IconButton>
-          </Link>
+          <div className="min-w-0">
+            <Breadcrumbs
+              className={`bg-transparent p-0 transition-all hidden sm:flex ${fixedNavbar ? "mt-1" : ""}`}
+            >
+              <Link to="/dashboard/home">
+                <Typography
+                  variant="small"
+                  color="blue-gray"
+                  className="font-normal opacity-50 transition-all hover:text-blue-500 hover:opacity-100"
+                >
+                  Cafe — Đặt hàng NCC
+                </Typography>
+              </Link>
+              <Typography variant="small" color="blue-gray" className="font-normal">
+                {pageLabel}
+              </Typography>
+            </Breadcrumbs>
+            <Typography variant="h6" color="blue-gray" className="truncate max-w-[160px] sm:max-w-none">
+              {pageLabel}
+            </Typography>
+          </div>
+        </div>
+
+        {/* ── Right: bell + user ── */}
+        <div className="flex items-center gap-1 shrink-0">
+          {/* Bell notification */}
           <Menu>
             <MenuHandler>
               <IconButton variant="text" color="blue-gray" className="relative">
@@ -216,7 +242,7 @@ export function DashboardNavbar() {
                 )}
               </IconButton>
             </MenuHandler>
-            <MenuList className="w-[340px] max-h-[80vh] overflow-y-auto border-0">
+            <MenuList className="w-[320px] sm:w-[340px] max-h-[80vh] overflow-y-auto border-0">
               <div className="px-3 py-2 border-b border-blue-gray-50">
                 <Typography variant="small" className="font-semibold text-blue-gray-700">
                   Thông báo đơn hàng
@@ -256,9 +282,40 @@ export function DashboardNavbar() {
               )}
             </MenuList>
           </Menu>
+
+          {/* User menu — hiện trên mọi màn hình */}
+          <Menu>
+            <MenuHandler>
+              <Button
+                variant="text"
+                color="blue-gray"
+                className="flex items-center gap-1 px-2 sm:px-4 normal-case"
+              >
+                <UserCircleIcon className="h-5 w-5 text-blue-gray-500 shrink-0" />
+                <span className="hidden sm:inline truncate max-w-[120px]">
+                  {currentUser?.name || "User"}
+                </span>
+              </Button>
+            </MenuHandler>
+            <MenuList className="min-w-[200px]">
+              <MenuItem disabled className="flex flex-col items-start gap-0.5 opacity-100">
+                <Typography variant="small" className="font-semibold">{currentUser?.name ?? ""}</Typography>
+                <Typography variant="small" color="gray" className="text-xs">{currentUser?.email ?? ""}</Typography>
+                <Typography variant="small" color="blue" className="text-xs capitalize">{currentUser?.role ?? ""}</Typography>
+              </MenuItem>
+              <hr className="my-1 border-blue-gray-50" />
+              <MenuItem onClick={() => navigate("/dashboard/settings")} className="flex items-center gap-2">
+                <Cog6ToothIcon className="h-4 w-4" />
+                Cài đặt
+              </MenuItem>
+              <MenuItem onClick={handleLogout} className="flex items-center gap-2 text-red-500">
+                <ArrowRightOnRectangleIcon className="h-4 w-4" />
+                Đăng xuất
+              </MenuItem>
+            </MenuList>
+          </Menu>
         </div>
       </div>
-
     </Navbar>
   );
 }

@@ -25,10 +25,40 @@ export function Stores() {
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  const openAdd = () => {
+  const localNextCode = () => {
+    const nums = (stores || [])
+      .map((s) => {
+        const raw = String(s.code ?? s.Code ?? "").trim();
+        return /^\d+$/.test(raw) ? Number(raw) : NaN;
+      })
+      .filter((n) => !Number.isNaN(n));
+    if (!nums.length) return "1";
+    return String(Math.max(...nums) + 1);
+  };
+
+  const generateNextCode = async () => {
+    const fallback = localNextCode();
+    if (!useApi) return fallback;
+    try {
+      const res = await api.get("stores.nextCode");
+      const code = String(res?.nextCode ?? res?.NextCode ?? res?.data?.nextCode ?? "").trim();
+      if (code) return code;
+    } catch (_) {
+      // BE cũ / lỗi mạng → dùng mã tính từ danh sách đang hiện
+    }
+    return fallback;
+  };
+
+  const openAdd = async () => {
     setEditing(null);
-    setForm({ code: "", name: "", address: "", phone: "", status: "Active" });
+    // Điền mã ngay (không chờ API) để tránh ô trống
+    const quick = localNextCode();
+    setForm({ code: quick, name: "", address: "", phone: "", status: "Active" });
     setOpen(true);
+    const nextCode = await generateNextCode();
+    if (nextCode && nextCode !== quick) {
+      setForm((f) => ({ ...f, code: nextCode }));
+    }
   };
   const openEdit = (row) => {
     setEditing(row);
@@ -94,23 +124,26 @@ export function Stores() {
   return (
     <div className="mt-12">
       <Card className="border border-blue-gray-100">
-        <CardHeader className="flex flex-row items-center justify-between p-4 border-b">
-          <Typography variant="h6" color="blue-gray">Cửa hàng</Typography>
-          <div className="flex items-center gap-2">
-            {useApi && stores.length === 0 && !apiLoading && (
-              <Button size="sm" variant="outlined" onClick={handleRefresh} disabled={refreshing}>{refreshing ? "Đang tải..." : "Tải lại"}</Button>
-            )}
-            <Button size="sm" className="flex items-center gap-1" onClick={openAdd}>
-              <PlusIcon className="w-4 h-4" /> Thêm
-            </Button>
+        <CardHeader className="p-4 border-b">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <Typography variant="h6" color="blue-gray">Cửa hàng</Typography>
+            <div className="flex items-center gap-2">
+              {useApi && stores.length === 0 && !apiLoading && (
+                <Button size="sm" variant="outlined" onClick={handleRefresh} disabled={refreshing}>{refreshing ? "Đang tải..." : "Tải lại"}</Button>
+              )}
+              <Button size="sm" className="flex items-center gap-1" onClick={openAdd}>
+                <PlusIcon className="w-4 h-4" /> Thêm
+              </Button>
+            </div>
           </div>
         </CardHeader>
         {apiError && <Typography variant="small" color="red" className="px-4 pb-1 block">{apiError}</Typography>}
         <CardBody className="overflow-x-auto p-0">
-          <table className="w-full min-w-[640px] table-auto">
+          {/* Desktop table */}
+          <table className="hidden md:table w-full min-w-[640px] table-auto">
             <thead>
               <tr>
-                {["Mã", "Tên", "Địa chỉ", "Điện thoại", "Trạng thái", "Thao tác"].map((el) => (
+                {["Mã cửa hàng", "Tên cửa hàng", "Địa chỉ", "Điện thoại", "Trạng thái", "Thao tác"].map((el) => (
                   <th key={el} className="border-b border-blue-gray-50 py-3 px-4 text-left">
                     <Typography variant="small" className="text-[11px] font-bold uppercase text-blue-gray-400">{el}</Typography>
                   </th>
@@ -135,27 +168,56 @@ export function Stores() {
               ); })}
             </tbody>
           </table>
+
+          {/* Mobile card list */}
+          <div className="md:hidden divide-y divide-blue-gray-50">
+            {stores.map((row, idx) => {
+              const r = { id: row.id ?? row.Id, code: row.code ?? row.Code, name: row.name ?? row.Name, address: row.address ?? row.Address, phone: row.phone ?? row.Phone, status: row.status ?? row.Status };
+              return (
+                <div key={r.id} className={`p-3 ${idx % 2 === 0 ? "bg-white" : "bg-blue-gray-50/40"}`}>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <Typography variant="small" className="font-semibold text-blue-gray-800 leading-tight">{r.name}</Typography>
+                    <Chip size="sm" color={r.status === "Active" ? "green" : "gray"} value={r.status} />
+                  </div>
+                  <Typography variant="small" color="blue-gray" className="text-xs mb-0.5">
+                    Mã: {r.code || "—"} | SĐT: {r.phone || "—"}
+                  </Typography>
+                  <Typography variant="small" color="blue-gray" className="text-xs mb-0.5">
+                    Địa chỉ: {r.address || "—"}
+                  </Typography>
+                  <div className="flex gap-1 mt-2">
+                    <IconButton variant="text" size="sm" onClick={() => openEdit(row)}><PencilIcon className="w-4 h-4" /></IconButton>
+                    <IconButton variant="text" size="sm" color="red" onClick={() => handleDelete(r.id)}><TrashIcon className="w-4 h-4" /></IconButton>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </CardBody>
       </Card>
 
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setOpen(false)}>
-          <Card className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-            <CardHeader className="pb-2">{editing ? "Sửa Cửa hàng" : "Thêm Cửa hàng"}</CardHeader>
-            <CardBody className="flex flex-col gap-3">
-              <Input label="Mã" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
-              <Input label="Tên" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" onClick={() => setOpen(false)}>
+          <Card className="w-full max-w-md max-h-[95vh] sm:max-h-[90vh] flex flex-col rounded-t-2xl sm:rounded-xl" onClick={(e) => e.stopPropagation()}>
+            <CardHeader className="pb-2 shrink-0">{editing ? "Sửa Cửa hàng" : "Thêm Cửa hàng"}</CardHeader>
+            <CardBody className="flex flex-col gap-3 overflow-y-auto flex-1 px-4 pb-4">
+              <Input
+                label="Mã cửa hàng (tự sinh)"
+                value={form.code}
+                onChange={(e) => setForm({ ...form, code: e.target.value })}
+              />
+              <Input label="Tên cửa hàng" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               <Input label="Địa chỉ" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
               <Input label="Điện thoại" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
               <Select label="Trạng thái" value={form.status} onChange={(v) => setForm({ ...form, status: v })}>
                 <Option value="Active">Active</Option>
                 <Option value="Inactive">Inactive</Option>
               </Select>
-              <div className="flex gap-2 justify-end pt-2">
-                <Button variant="outlined" onClick={() => setOpen(false)} disabled={saving}>Hủy</Button>
-                <Button onClick={handleSave} disabled={saving}>{saving ? "Đang lưu..." : "Lưu"}</Button>
-              </div>
             </CardBody>
+            <div className="shrink-0 px-4 pb-4 pt-2 border-t border-blue-gray-50 bg-white flex gap-2 justify-end">
+              <Button variant="outlined" onClick={() => setOpen(false)} disabled={saving}>Hủy</Button>
+              <Button onClick={handleSave} disabled={saving}>{saving ? "Đang lưu..." : "Lưu"}</Button>
+            </div>
           </Card>
         </div>
       )}

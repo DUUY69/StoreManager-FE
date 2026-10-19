@@ -1,9 +1,9 @@
 // Multi-Supplier Order System
 export * from "@/pages/dashboard/DashboardHome";
 export * from "@/pages/dashboard/Suppliers";
-export * from "@/pages/dashboard/Categories";
 export * from "@/pages/dashboard/Products";
 export * from "@/pages/dashboard/Stores";
+export * from "@/pages/dashboard/WarehousesList";
 export * from "@/pages/dashboard/Users";
 export * from "@/pages/dashboard/CreateOrder";
 export * from "@/pages/dashboard/OrderList";
@@ -12,3 +12,6 @@ export * from "@/pages/dashboard/SupplierOrderDetail";
 export * from "@/pages/dashboard/Reports";
 export * from "@/pages/dashboard/Warehouse";
 export * from "@/pages/dashboard/Settings";
+export * from "@/pages/dashboard/EodCheckin";
+export * from "@/pages/dashboard/EodMonthlyMatrix";
+export * from "@/pages/dashboard/ProductDemand";

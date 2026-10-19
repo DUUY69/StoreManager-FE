@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Typography, Card, CardHeader, CardBody, Button, Chip } from "@material-tailwind/react";
 import { StatisticsCard } from "@/widgets/cards";
@@ -14,30 +14,176 @@ import {
   ChartBarIcon,
   ShoppingCartIcon,
   CheckCircleIcon,
+  InboxStackIcon,
 } from "@heroicons/react/24/solid";
 import { EllipsisVerticalIcon, ArrowUpIcon, ClockIcon } from "@heroicons/react/24/outline";
+import { computeProductDemandOpen, getWeekRange, getMonthRange, filterOrdersByOrderDate, formatDemandDateRangeLabel, PRODUCT_DEMAND_RULES_NOTE } from "@/utils/productDemand";
+import { useUrlFilters, LIST_FILTER_PATHS } from "@/utils/urlFilters";
+
+const HOME_FILTER_STORAGE = LIST_FILTER_PATHS["/home"];
+
+const HOME_FILTER_DEFAULTS = { statsFrom: "", statsTo: "", demandFrom: "", demandTo: "" };
 
 const icon = { className: "w-6 h-6 text-white" };
+
+/** Bọc thẻ thống kê: bấm để chuyển trang (Admin). */
+function ClickableStat({ children, onNavigate, hint }) {
+  if (!onNavigate) return children;
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      title={hint}
+      onClick={onNavigate}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onNavigate();
+        }
+      }}
+      className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-blue-500 cursor-pointer hover:opacity-95 active:opacity-90 transition-opacity"
+    >
+      {children}
+    </div>
+  );
+}
 
 export function DashboardHome() {
   const navigate = useNavigate();
   const { currentUser, isAdmin, isStoreUser, isSupplierUser, storeName, supplierName } = useAuth();
-  const { orders, useApi, apiLoading, apiError, refetchInitialData } = useData();
+  const { orders, useApi, apiLoading, apiError, refetchInitialData, refetchOrders } = useData();
 
-  const totalOrders = orders.length;
-  const totalOrderSuppliers = orders.reduce((s, o) => s + (o.orderSuppliers || o.OrderSuppliers || []).length, 0);
-  const totalAmount = orders.reduce((s, o) => s + Number(o.totalAmount ?? o.TotalAmount ?? 0), 0);
-  const deliveringCount = orders.filter(
-    (o) => o.status === "Accepted" || o.orderSuppliers?.some((os) => os.status === "Delivering")
-  ).length;
+  useEffect(() => {
+    if (!isAdmin || !useApi) return;
+    const onVis = () => {
+      if (document.visibilityState === "visible") refetchOrders();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [isAdmin, useApi, refetchOrders]);
+
+  const thisWeek = useMemo(() => getWeekRange(0), []);
+  const thisMonth = useMemo(() => getMonthRange(0), []);
+  const { values, setFilter, setFilters } = useUrlFilters(HOME_FILTER_DEFAULTS, { storageKey: HOME_FILTER_STORAGE });
+  const statsDateFrom = values.statsFrom || thisWeek.from;
+  const statsDateTo = values.statsTo || thisWeek.to;
+
+  const ordersInStatsRange = useMemo(
+    () => filterOrdersByOrderDate(orders, statsDateFrom, statsDateTo),
+    [orders, statsDateFrom, statsDateTo]
+  );
+
+  const totalOrders = ordersInStatsRange.length;
+  const totalOrderSuppliers = ordersInStatsRange.reduce(
+    (s, o) => s + (o.orderSuppliers || o.OrderSuppliers || []).length,
+    0
+  );
+  const totalAmount = ordersInStatsRange.reduce(
+    (s, o) => s + Number(o.totalAmount ?? o.TotalAmount ?? 0),
+    0
+  );
+  const deliveringCount = ordersInStatsRange.filter((o) => {
+    const st = o.status ?? o.Status;
+    if (st === "Delivering" || st === "Accepted") return true;
+    return (o.orderSuppliers || o.OrderSuppliers || []).some((os) => (os.status ?? os.Status) === "Delivering");
+  }).length;
   const today = new Date().toISOString().slice(0, 10);
-  const lateCount = orders.reduce((sum, o) => {
-    return sum + (o.orderSuppliers || []).filter((os) => {
-      if (os.status === "Delivering" && os.expectedDeliveryDate) return os.expectedDeliveryDate < today;
-      if (os.status === "Delivered" && os.actualDeliveryDate && os.expectedDeliveryDate) return os.actualDeliveryDate > os.expectedDeliveryDate;
+  const lateCount = ordersInStatsRange.reduce((sum, o) => {
+    return sum + (o.orderSuppliers || o.OrderSuppliers || []).filter((os) => {
+      const ost = os.status ?? os.Status;
+      if (ost === "Delivering" && os.expectedDeliveryDate) return os.expectedDeliveryDate < today;
+      if (ost === "Delivered" && os.actualDeliveryDate && os.expectedDeliveryDate) return os.actualDeliveryDate > os.expectedDeliveryDate;
       return false;
     }).length;
   }, 0);
+
+  const statsOrdersQuery = () => {
+    const p = new URLSearchParams();
+    if (statsDateFrom) p.set("dateFrom", statsDateFrom);
+    if (statsDateTo) p.set("dateTo", statsDateTo);
+    const q = p.toString();
+    return q ? `?${q}` : "";
+  };
+
+  /** Đếm nhanh cho lối tắt (nếu JSX cũ còn tham chiếu); khối UI lối tắt đã gỡ khỏi trang. */
+  const adminShortcuts = useMemo(() => {
+    const st = (o) => o.status ?? o.Status;
+    const oss = (o) => o.orderSuppliers || o.OrderSuppliers || [];
+    return {
+      pending: orders.filter((o) => st(o) === "Pending").length,
+      accepted: orders.filter((o) => st(o) === "Accepted").length,
+      delivering: orders.filter((o) => st(o) === "Delivering").length,
+      completed: orders.filter((o) => st(o) === "Completed").length,
+      rejected: orders.filter((o) => st(o) === "Rejected").length,
+      osDelivering: orders.filter((o) => oss(o).some((os) => (os.status ?? os.Status) === "Delivering")).length,
+      receiveAdjust: orders.filter((o) =>
+        oss(o).some((os) => {
+          if ((os.status ?? os.Status) !== "Delivered") return false;
+          const flagged = !!(os.receiveQtyAdjusted ?? os.ReceiveQtyAdjusted);
+          const note = String(os.receiveNote ?? os.ReceiveNote ?? "").trim();
+          const imgs = os.receiveImages ?? os.ReceiveImages ?? [];
+          const hasImages = Array.isArray(imgs) && imgs.length > 0;
+          return flagged || !!note || hasImages;
+        })
+      ).length,
+    };
+  }, [orders]);
+
+  /** Đơn NCC Delivered: lệch SL, ghi chú nhận, hoặc có ảnh chứng từ (hóa đơn / nhận hàng). */
+  const adminReceiveDeliveryBundle = useMemo(() => {
+    const full = [];
+    for (const o of orders) {
+      const oid = o.id ?? o.Id;
+      for (const os of o.orderSuppliers || o.OrderSuppliers || []) {
+        if ((os.status ?? os.Status) !== "Delivered") continue;
+        const flagged = !!(os.receiveQtyAdjusted ?? os.ReceiveQtyAdjusted);
+        const note = String(os.receiveNote ?? os.ReceiveNote ?? "").trim();
+        const imgs = os.receiveImages ?? os.ReceiveImages ?? [];
+        const hasImages = Array.isArray(imgs) && imgs.length > 0;
+        if (!flagged && !note && !hasImages) continue;
+        let summary = "Ghi chú nhận hàng";
+        if (flagged && note) summary = "SL lệch + ghi chú";
+        else if (flagged) summary = "SL nhận khác đơn / cần đối chiếu";
+        else if (hasImages && !note) summary = "Có ảnh chứng từ";
+        const noteShort = note
+          ? note.length > 90
+            ? `${note.slice(0, 90)}…`
+            : note
+          : hasImages
+            ? "Cửa hàng đã tải ảnh khi xác nhận — đối chiếu hóa đơn / biên bản."
+            : "—";
+        full.push({
+          key: `${oid}-${os.id ?? os.Id}`,
+          orderId: oid,
+          osId: os.id ?? os.Id,
+          storeName: (o.storeName ?? o.StoreName) || "—",
+          supplierName: (os.supplierName ?? os.SupplierName) || "NCC",
+          summary,
+          noteShort,
+        });
+      }
+    }
+    full.sort((a, b) => Number(b.osId) - Number(a.osId));
+    const orderIds = new Set(full.map((r) => r.orderId));
+    return {
+      rows: full.slice(0, 8),
+      orderCount: orderIds.size,
+      lineCount: full.length,
+    };
+  }, [orders]);
+
+  const demandDateFrom = values.demandFrom || thisWeek.from;
+  const demandDateTo = values.demandTo || thisWeek.to;
+
+  /** Preview trên Dashboard — màn đầy đủ có search ở menu Nhu cầu SP. */
+  const productDemandOpen = useMemo(
+    () => computeProductDemandOpen(orders, demandDateFrom, demandDateTo).slice(0, 12),
+    [orders, demandDateFrom, demandDateTo]
+  );
+  const productDemandTotal = useMemo(
+    () => computeProductDemandOpen(orders, demandDateFrom, demandDateTo).length,
+    [orders, demandDateFrom, demandDateTo]
+  );
 
   const storeIdUser = currentUser?.storeId ?? currentUser?.StoreId;
   const supplierIdUser = currentUser?.supplierId ?? currentUser?.SupplierId;
@@ -67,8 +213,8 @@ export function DashboardHome() {
   }, [orders]);
 
   const ordersByStatusChart = useMemo(() => {
-    const statuses = ["Pending", "Rejected", "Accepted", "Completed"];
-    const count = statuses.map((s) => orders.filter((o) => o.status === s).length);
+    const statuses = ["Pending", "Rejected", "Accepted", "Delivering", "Completed"];
+    const count = statuses.map((s) => orders.filter((o) => (o.status ?? o.Status) === s).length);
     return {
       type: "bar",
       height: 220,
@@ -81,6 +227,8 @@ export function DashboardHome() {
       },
     };
   }, [orders]);
+
+  const ordersByStatusLabels = "Pending, Rejected, Accepted, Delivering, Completed";
 
   const ordersTrendChart = useMemo(() => {
     const weeks = ["Tuần 1", "Tuần 2", "Tuần 3", "Tuần 4"];
@@ -216,7 +364,84 @@ export function DashboardHome() {
     <div className="mt-12">
       {isAdmin && (
         <>
+          <Card className="mb-6 border border-blue-gray-100 shadow-sm">
+            <CardBody className="p-4">
+              <Typography variant="small" className="font-semibold text-blue-gray-800 mb-2 block">
+                Lọc thống kê theo ngày đặt đơn
+              </Typography>
+              <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2">
+                <input
+                  type="date"
+                  value={statsDateFrom}
+                  onChange={(e) => setFilter("statsFrom", e.target.value)}
+                  className="flex-1 min-w-0 sm:max-w-[160px] rounded-lg border border-blue-gray-200 bg-white px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  aria-label="Từ ngày"
+                />
+                <span className="text-blue-gray-400 text-sm shrink-0 hidden sm:inline">→</span>
+                <input
+                  type="date"
+                  value={statsDateTo}
+                  onChange={(e) => setFilter("statsTo", e.target.value)}
+                  className="flex-1 min-w-0 sm:max-w-[160px] rounded-lg border border-blue-gray-200 bg-white px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  aria-label="Đến ngày"
+                />
+                <div className="flex flex-wrap gap-1.5">
+                  <Button
+                    size="sm"
+                    variant={statsDateFrom === thisWeek.from && statsDateTo === thisWeek.to ? "filled" : "outlined"}
+                    color="blue"
+                    className="normal-case text-xs py-1.5 px-2.5"
+                    onClick={() => {
+                      const w = getWeekRange(0);
+                      setFilters({ statsFrom: w.from, statsTo: w.to });
+                    }}
+                  >
+                    Tuần này
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outlined"
+                    color="blue-gray"
+                    className="normal-case text-xs py-1.5 px-2.5"
+                    onClick={() => {
+                      const w = getWeekRange(-1);
+                      setFilters({ statsFrom: w.from, statsTo: w.to });
+                    }}
+                  >
+                    Tuần trước
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={statsDateFrom === thisMonth.from && statsDateTo === thisMonth.to ? "filled" : "outlined"}
+                    color="blue-gray"
+                    className="normal-case text-xs py-1.5 px-2.5"
+                    onClick={() => {
+                      const m = getMonthRange(0);
+                      setFilters({ statsFrom: m.from, statsTo: m.to });
+                    }}
+                  >
+                    Tháng này
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={!statsDateFrom && !statsDateTo ? "filled" : "outlined"}
+                    color="blue-gray"
+                    className="normal-case text-xs py-1.5 px-2.5"
+                    onClick={() => {
+                      setFilters({ statsFrom: "", statsTo: "" });
+                    }}
+                  >
+                    Tất cả
+                  </Button>
+                </div>
+              </div>
+              <Typography variant="small" color="blue-gray" className="text-xs font-normal mt-2">
+                Đang lọc: <strong>{formatDemandDateRangeLabel(statsDateFrom, statsDateTo)}</strong>
+              </Typography>
+            </CardBody>
+          </Card>
           <div className="mb-12 grid gap-y-10 gap-x-6 md:grid-cols-2 xl:grid-cols-4">
+            <ClickableStat onNavigate={() => navigate(`/dashboard/orders${statsOrdersQuery()}`)} hint="Mở danh sách đơn tổng">
             <StatisticsCard
               color="blue"
               icon={<ClipboardDocumentListIcon {...icon} />}
@@ -224,10 +449,12 @@ export function DashboardHome() {
               value={String(totalOrders)}
               footer={
                 <Typography className="font-normal text-blue-gray-600">
-                  <strong className="text-blue-500">Đơn tổng (Orders)</strong>
+                  <strong className="text-blue-500">Đơn tổng (Orders)</strong> — bấm để xem danh sách
                 </Typography>
               }
             />
+            </ClickableStat>
+            <ClickableStat onNavigate={() => navigate(`/dashboard/supplier-orders-admin${statsOrdersQuery()}`)} hint="Mở tất cả đơn NCC">
             <StatisticsCard
               color="teal"
               icon={<TruckIcon {...icon} />}
@@ -235,10 +462,12 @@ export function DashboardHome() {
               value={String(totalOrderSuppliers)}
               footer={
                 <Typography className="font-normal text-blue-gray-600">
-                  <strong className="text-teal-600">Đơn theo NCC (OrderSuppliers)</strong>
+                  <strong className="text-teal-600">Đơn theo NCC</strong> — bấm để xem
                 </Typography>
               }
             />
+            </ClickableStat>
+            <ClickableStat onNavigate={() => navigate(`/dashboard/orders${statsOrdersQuery()}`)} hint="Danh sách đơn (xem tổng tiền theo bộ lọc)">
             <StatisticsCard
               color="green"
               icon={<ShoppingCartIcon {...icon} />}
@@ -250,6 +479,8 @@ export function DashboardHome() {
                 </Typography>
               }
             />
+            </ClickableStat>
+            <ClickableStat onNavigate={() => navigate(`/dashboard/orders?osStatus=Delivering${statsDateFrom ? `&dateFrom=${statsDateFrom}` : ""}${statsDateTo ? `&dateTo=${statsDateTo}` : ""}`)} hint="Đơn có NCC đang giao">
             <StatisticsCard
               color="orange"
               icon={<TruckIcon {...icon} />}
@@ -257,10 +488,12 @@ export function DashboardHome() {
               value={String(deliveringCount)}
               footer={
                 <Typography className="font-normal text-blue-gray-600">
-                  <strong className="text-orange-500">Chấp nhận / Đang giao</strong>
+                  <strong className="text-orange-500">Đơn tổng / NCC đang giao</strong> — bấm lọc NCC Delivering
                 </Typography>
               }
             />
+            </ClickableStat>
+            <ClickableStat onNavigate={() => navigate(`/dashboard/orders?osStatus=Delivering${statsDateFrom ? `&dateFrom=${statsDateFrom}` : ""}${statsDateTo ? `&dateTo=${statsDateTo}` : ""}`)} hint="Theo dõi giao trễ">
             <StatisticsCard
               color="red"
               icon={<ExclamationTriangleIcon {...icon} />}
@@ -268,24 +501,137 @@ export function DashboardHome() {
               value={String(lateCount)}
               footer={
                 <Typography className="font-normal text-blue-gray-600">
-                  <strong className="text-red-500">Cần theo dõi</strong>
+                  <strong className="text-red-500">Cần theo dõi</strong> — bấm mở đơn đang giao
                 </Typography>
               }
             />
+            </ClickableStat>
+            <ClickableStat onNavigate={() => navigate("/dashboard/reports")} hint="Báo cáo">
             <StatisticsCard
               color="amber"
               icon={<ChartBarIcon {...icon} />}
               title="Báo cáo tháng"
-              value="Xem"
+              value="→"
               footer={
                 <Typography className="font-normal text-blue-gray-600">
-                  <Link to="/dashboard/reports">
-                    <strong className="text-amber-600">Đến trang Report</strong>
-                  </Link>
+                  <strong className="text-amber-600">Đến trang Báo cáo</strong>
                 </Typography>
               }
             />
+            </ClickableStat>
+            <ClickableStat
+              onNavigate={() => navigate("/dashboard/orders?receiveAdjust=1")}
+              hint="Danh sách đơn có nhận lệch hoặc ghi chú"
+            >
+              <StatisticsCard
+                color="deep-purple"
+                icon={<InboxStackIcon {...icon} />}
+                title="Nhận thiếu / thừa"
+                value={String(adminReceiveDeliveryBundle.orderCount)}
+                footer={
+                  <Typography className="font-normal text-blue-gray-600">
+                    <strong className="text-deep-purple-600">{adminReceiveDeliveryBundle.lineCount} dòng NCC</strong> đã ghi nhận lệch hoặc ghi chú — bấm xem danh sách
+                  </Typography>
+                }
+              />
+            </ClickableStat>
           </div>
+          {adminReceiveDeliveryBundle.lineCount > 0 && (
+            <Card className="mb-6 border border-deep-purple-100 bg-deep-purple-50/20 shadow-sm">
+              <CardHeader floated={false} shadow={false} className="m-0 p-4 border-b border-deep-purple-100 rounded-none">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <Typography variant="h6" color="blue-gray">Đơn giao — cửa hàng ghi nhận thiếu / thừa hoặc ghi chú</Typography>
+                    <Typography variant="small" color="gray" className="mt-1 font-normal max-w-3xl block">
+                      Khi cửa hàng xác nhận nhận hàng (đơn NCC <strong>Delivered</strong>) với số lượng khác đặt, có ghi chú, hoặc đã tải <strong>ảnh hóa đơn / chứng từ</strong>, hệ thống liệt kê ở đây và trong chuông góc phải. Nếu admin mở tab khác rồi quay lại, danh sách đơn sẽ tự làm mới.
+                    </Typography>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <Button
+                      size="sm"
+                      variant="outlined"
+                      color="blue-gray"
+                      className="normal-case"
+                      disabled={apiLoading}
+                      onClick={() => refetchOrders()}
+                    >
+                      {apiLoading ? "Đang tải…" : "Làm mới dữ liệu đơn"}
+                    </Button>
+                    <Link to="/dashboard/orders?receiveAdjust=1">
+                      <Button size="sm" variant="gradient" color="deep-purple" className="normal-case">
+                        Mở danh sách đã lọc
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardBody className="p-0 overflow-x-auto">
+                <table className="w-full table-auto min-w-[640px]">
+                  <thead>
+                    <tr>
+                      <th className="border-b border-blue-gray-50 py-2.5 px-4 text-left">
+                        <Typography variant="small" className="font-bold text-blue-gray-500">Đơn #</Typography>
+                      </th>
+                      <th className="border-b border-blue-gray-50 py-2.5 px-4 text-left">
+                        <Typography variant="small" className="font-bold text-blue-gray-500">NCC</Typography>
+                      </th>
+                      <th className="border-b border-blue-gray-50 py-2.5 px-4 text-left">
+                        <Typography variant="small" className="font-bold text-blue-gray-500">Cửa hàng</Typography>
+                      </th>
+                      <th className="border-b border-blue-gray-50 py-2.5 px-4 text-left">
+                        <Typography variant="small" className="font-bold text-blue-gray-500">Loại</Typography>
+                      </th>
+                      <th className="border-b border-blue-gray-50 py-2.5 px-4 text-left">
+                        <Typography variant="small" className="font-bold text-blue-gray-500">Ghi chú / tóm tắt</Typography>
+                      </th>
+                      <th className="border-b border-blue-gray-50 py-2.5 px-4 text-right w-28">
+                        <Typography variant="small" className="font-bold text-blue-gray-500">&nbsp;</Typography>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adminReceiveDeliveryBundle.rows.map((r) => (
+                      <tr key={r.key} className="hover:bg-white/60">
+                        <td className="border-b border-blue-gray-50 py-2.5 px-4">
+                          <Typography variant="small" className="font-semibold">#{r.orderId}</Typography>
+                          <Typography variant="small" color="gray" className="text-xs block">NCC #{r.osId}</Typography>
+                        </td>
+                        <td className="border-b border-blue-gray-50 py-2.5 px-4">
+                          <Typography variant="small">{r.supplierName}</Typography>
+                        </td>
+                        <td className="border-b border-blue-gray-50 py-2.5 px-4">
+                          <Typography variant="small">{r.storeName}</Typography>
+                        </td>
+                        <td className="border-b border-blue-gray-50 py-2.5 px-4">
+                          <Chip size="sm" value={r.summary} color="purple" className="w-fit normal-case" />
+                        </td>
+                        <td className="border-b border-blue-gray-50 py-2.5 px-4 max-w-md">
+                          <Typography variant="small" color="gray" className="text-xs line-clamp-2">{r.noteShort}</Typography>
+                        </td>
+                        <td className="border-b border-blue-gray-50 py-2.5 px-4 text-right">
+                          <div className="flex flex-col items-end gap-1">
+                            <Button size="sm" variant="text" className="text-deep-purple-700 font-semibold normal-case text-xs py-1" onClick={() => navigate(`/dashboard/orders/${r.orderId}`)}>
+                              Đơn tổng →
+                            </Button>
+                            <Button size="sm" variant="text" className="text-blue-600 font-semibold normal-case text-xs py-0" onClick={() => navigate(`/dashboard/supplier-orders/${r.osId}`)}>
+                              Đơn NCC →
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {adminReceiveDeliveryBundle.lineCount > adminReceiveDeliveryBundle.rows.length ? (
+                  <div className="px-4 py-2 border-t border-deep-purple-100 bg-white/50">
+                    <Typography variant="small" color="gray" className="text-xs">
+                      Hiển thị {adminReceiveDeliveryBundle.rows.length} / {adminReceiveDeliveryBundle.lineCount} dòng — bấm &quot;Mở danh sách đã lọc&quot; để xem hết.
+                    </Typography>
+                  </div>
+                ) : null}
+              </CardBody>
+            </Card>
+          )}
           <div className="mb-6 grid grid-cols-1 gap-y-12 gap-x-6 md:grid-cols-2 xl:grid-cols-3">
             <StatisticsChart
               color="white"
@@ -314,7 +660,7 @@ export function DashboardHome() {
             <StatisticsChart
               color="white"
               title="Các đơn theo trạng thái"
-              description="Pending, Rejected, Accepted, Completed"
+              description={ordersByStatusLabels}
               chart={ordersByStatusChart}
               footer={
                 <Typography variant="small" className="flex items-center font-normal text-blue-gray-600">
@@ -324,6 +670,142 @@ export function DashboardHome() {
               }
             />
           </div>
+          <Card className="mb-6 border border-teal-100 bg-teal-50/20 shadow-sm">
+            <CardHeader floated={false} shadow={false} className="m-0 p-4 border-b border-teal-100 rounded-none">
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                  <div>
+                    <Typography variant="h6" color="blue-gray">Nhu cầu theo sản phẩm (đơn còn xử lý)</Typography>
+                    <Typography variant="small" color="gray" className="mt-1 font-normal">
+                      {PRODUCT_DEMAND_RULES_NOTE[0]} Bấm <strong>Đơn có SP</strong> để mở danh sách đơn đã lọc.
+                    </Typography>
+                  </div>
+                  <Link
+                    to="/dashboard/product-demand"
+                    className="text-xs font-semibold text-teal-700 hover:underline shrink-0 whitespace-nowrap"
+                  >
+                    Tìm kiếm đầy đủ →
+                  </Link>
+                </div>
+                <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2">
+                  <input
+                    type="date"
+                    value={demandDateFrom}
+                    onChange={(e) => setFilter("demandFrom", e.target.value)}
+                    className="flex-1 min-w-0 sm:max-w-[160px] rounded-lg border border-teal-200 bg-white px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                    aria-label="Từ ngày"
+                  />
+                  <span className="text-blue-gray-400 text-sm shrink-0 hidden sm:inline">→</span>
+                  <input
+                    type="date"
+                    value={demandDateTo}
+                    onChange={(e) => setFilter("demandTo", e.target.value)}
+                    className="flex-1 min-w-0 sm:max-w-[160px] rounded-lg border border-teal-200 bg-white px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                    aria-label="Đến ngày"
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    <Button
+                      size="sm"
+                      variant={demandDateFrom === thisWeek.from && demandDateTo === thisWeek.to ? "filled" : "outlined"}
+                      color="teal"
+                      className="normal-case text-xs py-1.5 px-2.5"
+                      onClick={() => {
+                        const w = getWeekRange(0);
+                        setFilters({ demandFrom: w.from, demandTo: w.to });
+                      }}
+                    >
+                      Tuần này
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outlined"
+                      color="blue-gray"
+                      className="normal-case text-xs py-1.5 px-2.5"
+                      onClick={() => {
+                        const w = getWeekRange(-1);
+                        setFilters({ demandFrom: w.from, demandTo: w.to });
+                      }}
+                    >
+                      Tuần trước
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={!demandDateFrom && !demandDateTo ? "filled" : "outlined"}
+                      color="blue-gray"
+                      className="normal-case text-xs py-1.5 px-2.5"
+                      onClick={() => {
+                        setFilters({ demandFrom: "", demandTo: "" });
+                      }}
+                    >
+                      Tất cả
+                    </Button>
+                  </div>
+                </div>
+                <Typography variant="small" color="blue-gray" className="text-xs font-normal">
+                  {(demandDateFrom || demandDateTo) ? (
+                    <>
+                      Đang lọc ngày đặt: <strong>{demandDateFrom || "…"}</strong> → <strong>{demandDateTo || "…"}</strong>
+                      {" · "}
+                    </>
+                  ) : null}
+                  {productDemandTotal} dòng (SP + NCC)
+                  {productDemandTotal > productDemandOpen.length ? (
+                    <span className="text-blue-gray-400"> · hiển thị {productDemandOpen.length} dòng đầu</span>
+                  ) : null}
+                </Typography>
+              </div>
+            </CardHeader>
+            <CardBody className="p-0 max-h-80 overflow-y-auto">
+              {productDemandOpen.length === 0 ? (
+                <div className="p-6">
+                  <Typography variant="small" color="gray">Không có nhu cầu mở hoặc chưa có dòng sản phẩm.</Typography>
+                </div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="bg-white sticky top-0 z-[1] shadow-sm">
+                    <tr>
+                      <th className="text-left py-2.5 px-4 font-medium text-blue-gray-600">Sản phẩm</th>
+                      <th className="text-left py-2.5 px-4 font-medium text-blue-gray-600 min-w-[100px]">NCC</th>
+                      <th className="text-right py-2.5 px-4 font-medium text-blue-gray-600 w-24">Tổng SL</th>
+                      <th className="text-right py-2.5 px-4 font-medium text-blue-gray-600 w-16">Dòng</th>
+                      <th className="text-right py-2.5 px-4 w-36" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {productDemandOpen.map((row) => (
+                      <tr key={`${row.productId}-${row.supplierId ?? "x"}`} className="border-t border-teal-100/80 bg-white/90 hover:bg-teal-50/40">
+                        <td className="py-2.5 px-4">
+                          <Typography variant="small" className="font-medium text-blue-gray-800">{row.productName}</Typography>
+                          {row.unit ? <Typography variant="small" color="gray" className="text-xs block">{row.unit}</Typography> : null}
+                        </td>
+                        <td className="py-2.5 px-4">
+                          <Typography variant="small" className="text-blue-gray-700">{row.supplierName}</Typography>
+                        </td>
+                        <td className="py-2.5 px-4 text-right font-semibold text-teal-900">{row.totalQty}</td>
+                        <td className="py-2.5 px-4 text-right text-blue-gray-500">{row.lines}</td>
+                        <td className="py-2.5 px-4 text-right">
+                          <Button
+                            size="sm"
+                            variant="text"
+                            className="px-2 py-1 text-xs font-semibold text-blue-700"
+                            onClick={() => {
+                              const params = new URLSearchParams({ product: row.productName });
+                              if (demandDateFrom) params.set("dateFrom", demandDateFrom);
+                              if (demandDateTo) params.set("dateTo", demandDateTo);
+                              if (row.supplierId != null) params.set("supplier", String(row.supplierId));
+                              navigate(`/dashboard/orders?${params.toString()}`);
+                            }}
+                          >
+                            Đơn có SP →
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </CardBody>
+          </Card>
           <div className="mb-4 grid grid-cols-1 gap-6 xl:grid-cols-3">
             <Card className="overflow-hidden xl:col-span-2 border border-blue-gray-100 shadow-sm">
               <CardHeader

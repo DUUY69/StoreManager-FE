@@ -6,16 +6,38 @@
 
 import apiMapping from "@/config/api-mapping.json";
 import { addLog, updateLog } from "./api-log";
+import {
+  getAuthToken,
+  setAuthToken,
+  clearAuthSession,
+  isLoginPath,
+  redirectToLogin,
+} from "@/utils/authSession";
 
-// Khi trang load qua HTTPS (Vercel) mà API URL là HTTP → dùng cùng origin để request đi qua proxy (tránh Mixed Content)
+// Base URL BE: từ .env. Dev mặc định qua proxy Vite (cùng origin) — tránh CORS localhost vs 127.0.0.1.
 let baseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+const apiDirectInDev = String(import.meta.env.VITE_API_DIRECT || "").toLowerCase() === "true";
+if (import.meta.env.DEV && typeof window !== "undefined" && !apiDirectInDev) {
+  baseUrl = window.location.origin;
+} else if (import.meta.env.DEV && !baseUrl) {
+  baseUrl = "http://localhost:5000";
+}
+// Production guard: tránh build nhầm base URL localhost gây lỗi CORS khi deploy server/domain.
+if (!import.meta.env.DEV && typeof window !== "undefined") {
+  const host = window.location.hostname;
+  const isLocalHostValue = /localhost|127\.0\.0\.1/i.test(baseUrl);
+  const canUseCurrentHost = host && !/localhost|127\.0\.0\.1/i.test(host);
+  if ((!baseUrl || isLocalHostValue) && canUseCurrentHost) {
+    baseUrl = `http://${host}:5000`;
+  }
+}
+// Khi trang load qua HTTPS (Vercel) mà API URL là HTTP → dùng cùng origin để request đi qua proxy (tránh Mixed Content)
 if (typeof window !== "undefined" && window.location.protocol === "https:" && baseUrl.startsWith("http://")) {
   baseUrl = window.location.origin;
 }
 const BASE_URL = baseUrl;
-const USE_API = String(import.meta.env.VITE_USE_API || "").toLowerCase() === "true";
-
-const TOKEN_KEY = "admin_dashboard_token";
+// Bật gọi API: .env VITE_USE_API=true, hoặc dev có BASE_URL thì mặc định bật
+const USE_API = String(import.meta.env.VITE_USE_API || "").toLowerCase() === "true" || (import.meta.env.DEV && !!baseUrl);
 
 /** Lấy cấu hình endpoint theo key (dạng "auth.login", "suppliers.getById") */
 function getEndpoint(key, params = {}) {
@@ -35,7 +57,10 @@ function getEndpoint(key, params = {}) {
 
 /** Build URL đầy đủ (base + path + query string) */
 function buildUrl(path, query = {}) {
-  const url = new URL(path, BASE_URL);
+  const origin =
+    BASE_URL ||
+    (typeof window !== "undefined" ? window.location.origin : "http://localhost:5173");
+  const url = new URL(path, origin);
   Object.entries(query).forEach(([k, v]) => {
     if (v != null && v !== "") url.searchParams.set(k, v);
   });
@@ -44,8 +69,13 @@ function buildUrl(path, query = {}) {
 
 /** Gọi API theo key. options: { params, query, body, token, headers, formData } */
 export async function request(key, options = {}) {
-  if (!USE_API || !BASE_URL) {
-    const msg = "API chưa bật hoặc thiếu VITE_API_BASE_URL. Đặt VITE_USE_API=true và VITE_API_BASE_URL trong .env";
+  if (!USE_API) {
+    const msg = "API chưa bật. Đặt VITE_USE_API=true trong .env";
+    addLog({ key, method: "—", path: "—", status: "error", message: msg });
+    return Promise.reject(new Error(msg));
+  }
+  if (!BASE_URL && !import.meta.env.DEV) {
+    const msg = "Thiếu VITE_API_BASE_URL. Đặt URL BE trong .env (production).";
     addLog({ key, method: "—", path: "—", status: "error", message: msg });
     return Promise.reject(new Error(msg));
   }
@@ -67,7 +97,7 @@ export async function request(key, options = {}) {
 
   const reqHeaders = { ...headers };
   if (!formData) reqHeaders["Content-Type"] = "application/json";
-  const t = token ?? localStorage.getItem(TOKEN_KEY);
+  const t = token ?? getAuthToken();
   if (t) reqHeaders["Authorization"] = `Bearer ${t}`;
 
   const config = { method: endpoint.method, headers: reqHeaders };
@@ -80,8 +110,11 @@ export async function request(key, options = {}) {
   try {
     const res = await fetch(url, config);
     if (!res.ok) {
-      if (res.status === 401) {
-        try { localStorage.removeItem(TOKEN_KEY); } catch (_) {}
+      if (res.status === 401 && key !== "auth.login") {
+        clearAuthSession();
+        if (typeof window !== "undefined" && !isLoginPath()) {
+          redirectToLogin();
+        }
       }
       const err = new Error(res.statusText || `HTTP ${res.status}`);
       err.status = res.status;
@@ -131,12 +164,11 @@ export function del(key, options = {}) {
 }
 
 export function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
+  return getAuthToken();
 }
 
 export function setToken(token) {
-  if (token) localStorage.setItem(TOKEN_KEY, token);
-  else localStorage.removeItem(TOKEN_KEY);
+  setAuthToken(token);
 }
 
 export { USE_API, BASE_URL, getEndpoint };

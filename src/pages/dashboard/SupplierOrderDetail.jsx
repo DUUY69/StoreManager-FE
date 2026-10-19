@@ -1,11 +1,19 @@
 import React, { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { buildReturnSearch, LIST_FILTER_PATHS } from "@/utils/urlFilters";
 import { Card, CardHeader, CardBody, Typography, Button, Chip } from "@material-tailwind/react";
 import { ArrowLeftIcon, DocumentArrowDownIcon, PhotoIcon, DocumentTextIcon } from "@heroicons/react/24/solid";
 import { useData } from "@/context/DataContext";
 import { useAuth, useToast } from "@/context";
 import api from "@/api";
 import { printOrderBySupplier, exportOrderToExcel } from "@/utils/orderExport";
+import {
+  lineOrderedQty,
+  lineReceivedQtyDisplay,
+  lineQtyMismatch,
+  hasReceiveDiscrepancy,
+  receiveDiscrepancyLabel,
+} from "@/utils/orderReceiveUtils";
 
 // Đơn con NCC: 5 trạng thái — Chờ, Chấp nhận, Từ chối, Đang giao, Giao hoàn thành
 const osStatusColors = { Pending: "indigo", Accepted: "blue", Rejected: "red", Delivering: "orange", Delivered: "green" };
@@ -74,8 +82,13 @@ function OrderSupplierTimeline({ os }) {
 export function SupplierOrderDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { orders, setOrders, stores, suppliers, useApi, refetchOrders } = useData();
-  const { currentUser } = useAuth();
+  const { currentUser, isAdmin } = useAuth();
+  const backToList = () => {
+    const path = location.state?.returnPath || (isAdmin ? "/dashboard/supplier-orders-admin" : "/dashboard/supplier-orders");
+    navigate(`${path}${buildReturnSearch(location, LIST_FILTER_PATHS["/supplier-orders"])}`);
+  };
   const { showToast } = useToast();
   const [selectedStatus, setSelectedStatus] = useState("");
   const [updating, setUpdating] = useState(false);
@@ -101,10 +114,10 @@ export function SupplierOrderDetail() {
   }
 
   const supplierIdUser = currentUser?.supplierId ?? currentUser?.SupplierId;
-  const isMyOrder = (found || osDetail) && Number((osDetail ?? found).supplierId ?? (osDetail ?? found).SupplierId) === Number(supplierIdUser);
-  const orderStatus = order?.status ?? order?.Status ?? "";
-  const visibleStatuses = ["Accepted", "Completed"];
-  const isParentVisibleToSupplier = order ? visibleStatuses.includes(orderStatus) : true;
+  // Admin có quyền xem tất cả đơn NCC
+  const isMyOrder = isAdmin || ((found || osDetail) && Number((osDetail ?? found).supplierId ?? (osDetail ?? found).SupplierId) === Number(supplierIdUser));
+  // NCC xem được tất cả trạng thái đơn của mình
+  const isParentVisibleToSupplier = true;
 
   useEffect(() => {
     const os = osDetail ?? found;
@@ -126,7 +139,7 @@ export function SupplierOrderDetail() {
     return (
       <div className="mt-12">
         <Typography color="gray">Đang tải chi tiết đơn...</Typography>
-        <Button className="mt-2" variant="text" onClick={() => navigate("/dashboard/supplier-orders")}>Quay lại</Button>
+        <Button className="mt-2" variant="text" onClick={backToList}>Quay lại</Button>
       </div>
     );
   }
@@ -134,8 +147,8 @@ export function SupplierOrderDetail() {
   if ((!found && !osDetail) || !isMyOrder) {
     return (
       <div className="mt-12">
-        <Typography>Không tìm thấy đơn hoặc không có quyền (đơn tổng chưa được chấp nhận hoặc đã bị từ chối).</Typography>
-        <Button className="mt-2" onClick={() => navigate("/dashboard/supplier-orders")}>Quay lại</Button>
+        <Typography>Không tìm thấy đơn hoặc không có quyền.</Typography>
+        <Button className="mt-2" onClick={() => navigate(isAdmin ? "/dashboard/suppliers" : "/dashboard/supplier-orders")}>Quay lại</Button>
       </div>
     );
   }
@@ -250,11 +263,21 @@ export function SupplierOrderDetail() {
 
   const orderItems = os.orderItems ?? os.OrderItems ?? [];
   const receiveImages = os.receiveImages ?? os.ReceiveImages ?? [];
+  const osStatus = os.status ?? os.Status ?? "";
+  const receiveFlag = hasReceiveDiscrepancy(os);
+  const receiveLabel = receiveDiscrepancyLabel(os);
+
+  const computeLineTotal = (item) => {
+    const p = Number((item.price ?? item.Price) || 0);
+    const r = lineReceivedQtyDisplay(item, osStatus);
+    const q = r != null ? r : lineOrderedQty(item);
+    return q * p;
+  };
 
   return (
     <div className="mt-12">
       <div className="flex flex-col gap-4 mb-6 sm:flex-row sm:items-center sm:justify-between">
-        <Button variant="text" className="flex items-center gap-1 w-fit" onClick={() => navigate("/dashboard/supplier-orders")}>
+        <Button variant="text" className="flex items-center gap-1 w-fit" onClick={backToList}>
           <ArrowLeftIcon className="w-4 h-4" /> Quay lại danh sách
         </Button>
         <div className="flex flex-wrap items-center gap-2">
@@ -308,12 +331,7 @@ export function SupplierOrderDetail() {
                   onChange={(e) => setSelectedStatus(e.target.value || (os.status ?? os.Status) || "Pending")}
                   className="min-w-[200px] rounded-lg border border-blue-gray-200 bg-white px-3 py-2 text-sm text-blue-gray-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                 >
-                  {OS_STATUS_OPTIONS.filter((opt) => {
-                    const cur = os.status ?? os.Status ?? "Pending";
-                    if (cur === "Accepted" && opt.value === "Rejected") return false;
-                    if (cur === "Rejected" && opt.value === "Accepted") return false;
-                    return true;
-                  }).map((opt) => (
+                  {OS_STATUS_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
@@ -335,6 +353,40 @@ export function SupplierOrderDetail() {
           </div>
         </CardHeader>
         <CardBody className="p-4">
+          {osStatus === "Delivered" && receiveFlag && (
+            <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+              <Typography variant="small" className="font-bold text-amber-900">
+                {receiveLabel || "Cửa hàng đã xác nhận nhận — có lệch hoặc ghi chú"}
+              </Typography>
+              {(os.receiveNote ?? os.ReceiveNote) && (
+                <Typography variant="small" className="mt-1 text-amber-800 block">
+                  Ghi chú: {os.receiveNote ?? os.ReceiveNote}
+                </Typography>
+              )}
+              <Typography variant="small" color="gray" className="mt-1 text-xs block">
+                Đối chiếu cột <strong>Thực tế nhận</strong> bên dưới. Chi tiết đầy đủ:{" "}
+                <button type="button" className="text-blue-600 underline font-semibold" onClick={() => navigate(`/dashboard/orders/${displayOrder.id ?? displayOrder.Id}`)}>
+                  Đơn tổng #{displayOrder.id ?? displayOrder.Id}
+                </button>
+                {isAdmin && (
+                  <>
+                    {" · "}
+                    <button
+                      type="button"
+                      className="text-amber-800 underline font-semibold"
+                      onClick={() =>
+                        navigate(`/dashboard/orders/${displayOrder.id ?? displayOrder.Id}`, {
+                          state: { adminEditReceiveOsId: os.id ?? os.Id },
+                        })
+                      }
+                    >
+                      Admin chỉnh SL nhận
+                    </button>
+                  </>
+                )}
+              </Typography>
+            </div>
+          )}
           {receiveImages.length > 0 && (
             <div className="mb-4">
               <Typography variant="h6" color="blue-gray" className="mb-2">Ảnh đơn đã giao (Store đã gửi)</Typography>
@@ -378,45 +430,42 @@ export function SupplierOrderDetail() {
               </div>
             </div>
           )}
-          <table className="w-full table-auto">
+          <table className="w-full table-auto text-sm">
             <thead>
-              <tr>
-                <th className="text-left py-2 px-3"><Typography variant="small" className="font-bold text-blue-gray-500">Sản phẩm</Typography></th>
-                <th className="text-left py-2 px-3"><Typography variant="small" className="font-bold text-blue-gray-500">Yêu cầu</Typography></th>
-                <th className="text-left py-2 px-3"><Typography variant="small" className="font-bold text-blue-gray-500">Tồn còn</Typography></th>
-                <th className="text-left py-2 px-3"><Typography variant="small" className="font-bold text-blue-gray-500">Đơn giá</Typography></th>
-                <th className="text-right py-2 px-3"><Typography variant="small" className="font-bold text-blue-gray-500">Thành tiền</Typography></th>
+              <tr className="bg-blue-600 text-white">
+                <th className="text-left py-2 px-3 font-semibold">Sản phẩm</th>
+                <th className="text-center py-2 px-3 font-semibold whitespace-nowrap">Yêu cầu</th>
+                <th className="text-center py-2 px-3 font-semibold whitespace-nowrap">Thực tế nhận</th>
+                <th className="text-left py-2 px-3 font-semibold">Đơn giá</th>
+                <th className="text-right py-2 px-3 font-semibold">Thành tiền</th>
               </tr>
             </thead>
             <tbody>
               {orderItems.map((item, idx) => {
-                const q = item.quantity ?? item.Quantity ?? 0;
+                const qOrd = lineOrderedQty(item);
+                const qRec = lineReceivedQtyDisplay(item, osStatus);
+                const mismatch = lineQtyMismatch(item, osStatus);
                 const p = Number((item.price ?? item.Price) || 0);
-                const remaining = item.stockRemaining ?? item.StockRemaining;
-                const hasStock = remaining != null;
-                const enough = hasStock && Number(remaining) >= Number(q);
+                const unit = item.unit ?? item.Unit ?? "";
                 return (
-                  <tr key={item.id ?? item.Id ?? idx}>
-                    <td className="py-2 px-3"><Typography variant="small">{item.productName ?? item.ProductName}</Typography></td>
-                    <td className="py-2 px-3"><Typography variant="small">{q} {item.unit ?? item.Unit}</Typography></td>
-                    <td className="py-2 px-3">
-                      {hasStock ? (
-                        <Typography variant="small" className={enough ? "text-green-700 font-medium" : "text-amber-700"}>
-                          {Number(remaining).toLocaleString("vi-VN")} {enough ? "✓ Đủ" : "— Thiếu"}
-                        </Typography>
-                      ) : (
-                        <Typography variant="small" color="gray">—</Typography>
-                      )}
+                  <tr key={item.id ?? item.Id ?? idx} className={idx % 2 === 0 ? "bg-white" : "bg-blue-gray-50/40"}>
+                    <td className="py-2 px-3">{item.productName ?? item.ProductName}</td>
+                    <td className={`py-2 px-3 text-center font-medium ${mismatch ? "text-amber-900 bg-amber-50/80" : ""}`}>
+                      {qOrd} {unit}
                     </td>
-                    <td className="py-2 px-3"><Typography variant="small">{p.toLocaleString("vi-VN")} đ</Typography></td>
-                    <td className="py-2 px-3 text-right"><Typography variant="small">{(q * p).toLocaleString("vi-VN")} đ</Typography></td>
+                    <td className={`py-2 px-3 text-center font-medium ${mismatch ? "text-amber-900 bg-amber-50/80" : ""}`}>
+                      {qRec != null ? `${qRec} ${unit}` : "—"}
+                    </td>
+                    <td className="py-2 px-3">{p.toLocaleString("vi-VN")} đ</td>
+                    <td className="py-2 px-3 text-right font-semibold">{computeLineTotal(item).toLocaleString("vi-VN")} đ</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
           <Typography variant="small" className="mt-2 font-semibold text-green-700">
-            Tổng tiền: {orderItems.reduce((s, it) => s + (it.quantity ?? it.Quantity ?? 0) * Number((it.price ?? it.Price) || 0), 0).toLocaleString("vi-VN")} đ
+            Tổng tiền{osStatus === "Delivered" ? " (theo SL thực nhận)" : ""}:{" "}
+            {orderItems.reduce((s, it) => s + computeLineTotal(it), 0).toLocaleString("vi-VN")} đ
           </Typography>
           {(os.expectedDeliveryDate ?? os.ExpectedDeliveryDate) && (
             <Typography variant="small" color="gray" className="mt-2 block">Giao dự kiến: {String(os.expectedDeliveryDate ?? os.ExpectedDeliveryDate).slice(0, 10)}</Typography>

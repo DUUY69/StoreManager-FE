@@ -1,0 +1,15 @@
+/* Cuộn mượt trên iOS Safari */
+html,
+body,
+#root {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Tránh double-tap zoom làm lệch layout input trên mobile */
+@media (max-width: 1279px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
